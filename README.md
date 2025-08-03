@@ -16,7 +16,7 @@ Please create a folder for each flux that is prefixed with "FLUX-". Then use Pas
 - pd
 - rs
 
-Feel free to use your own preferred naming convention within this folder.
+Feel free to use your own preferred naming convention within the folder.
 
 ### Result
 So, our first couple of flux will be named:
@@ -24,4 +24,4 @@ So, our first couple of flux will be named:
 - FLUX-HelloWorld-pd/helloWorld.pd
 
 ## License
-This is open software under the [MIT Open Source License](https://tlo.mit.edu/understand-ip/exploring-mit-open-source-license-comprehensive-guide).
+Every Flux committed to this repository must be open sourced via the [MIT Open Source License](https://tlo.mit.edu/understand-ip/exploring-mit-open-source-license-comprehensive-guide).
