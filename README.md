@@ -6,5 +6,22 @@ Each Flux is a self-contained firmware project with:
 - A unique behavior or purpose
 - Documentation, controls, and patch examples
 
+## Flux Naming
+
+### Convention
+Please create a folder for each flux that is prefixed with "FLUX-". Then use PascalCase to give your flux a descriptive name. Finally add "-extension" (from the list below) to identify the language used in the flux:
+- cpp
+- maxpat
+- ino
+- pd
+- rs
+
+Feel free to use your own preferred naming convention within this folder.
+
+### Result
+So, our first couple of flux will be named:
+- FLUX-HelloWorld-cpp/helloWorld.cpp
+- FLUX-HelloWorld-pd/helloWorld.pd
+
 ## License
 This is open software under the [MIT Open Source License](https://tlo.mit.edu/understand-ip/exploring-mit-open-source-license-comprehensive-guide).
