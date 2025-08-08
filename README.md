@@ -22,7 +22,7 @@ Feel free to use your own preferred naming convention within the folder.
 So, a Hello World FLUX written in pure data would be named:
 > FLUX-HelloWorld-pd/helloWorld.pd
 
-### Initialiation
+### Initialization
 The default FLUX installed on all [celectric Spark](https://github.com/clectric-diy/Spark-AE) modules will be:
 > FLUX-InitialSpark-pd/initialSpark.pd
 
