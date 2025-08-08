@@ -19,7 +19,7 @@ Please create a folder for each FLUX that is prefixed with "FLUX-". Then use Pas
 Feel free to use your own preferred naming convention within the folder.
 
 ### Result
-So, a Hello World FLUX written in pure data would be named:
+So, a Hello World FLUX written in Pure Data (Pd) would be named:
 > FLUX-HelloWorld-pd/helloWorld.pd
 
 ### Initialization
