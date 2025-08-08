@@ -10,7 +10,7 @@ Each FLUX is a self-contained firmware project with:
 Including a good header comment such as the following example will help everyone to understand your FLUX.
 
 ```
-Hello World Flux
+Hello World FLUX
 Author: Charles H. Leggett (chleggett)
 Initial Release: 2025-08-03
 Repository: https://github.com/clectric-diy/FLUX
