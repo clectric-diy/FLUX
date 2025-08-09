@@ -46,7 +46,7 @@ So, a Hello World FLUX written in Pure Data (Pd) would be named:
 > FLUX-HelloWorld-pd/helloWorld.pd
 
 ### Initialization
-All [celectric Spark](https://github.com/clectric-diy/Spark-AE) modules will ship with the InitialSpark FLUX:
+All [clectric Spark](https://github.com/clectric-diy/Spark-AE) modules will ship with the InitialSpark FLUX:
 > FLUX-InitialSpark-pd/initialSpark.pd
 
 ## License
