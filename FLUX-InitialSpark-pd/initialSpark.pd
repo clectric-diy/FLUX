@@ -1,1 +1,5 @@
 #N canvas 827 239 527 327 12;
+#X obj 533 516 dac~;
+#X obj 427 226 palette/delay.m~;
+#A saved 100 0 100 0 0.5;
+#X connect 1 0 0 0;
