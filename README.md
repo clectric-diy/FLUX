@@ -46,8 +46,10 @@ So, a Hello World FLUX written in Pure Data (Pd) would be named:
 > FLUX-HelloWorld-pd/helloWorld.pd
 
 ### Initialization
-All [clectric Spark](https://github.com/clectric-diy/Spark-AE) modules will ship with the InitialSpark FLUX:
-> FLUX-InitialSpark-pd/initialSpark.pd
+The [clectric Spark](https://github.com/clectric-diy/Spark-AE) and [clectric Shock](https://github.com/clectric-diy/Shock-AE) modules will ship with their Init FLUX:
+
+> FLUX-ShockInit-cpp/shockInit.cpp
+> FLUX-SparkInit-cpp/sparkInit.cpp
 
 ## License
 Every FLUX committed to this repository must be open sourced via the [MIT Open Source License](https://tlo.mit.edu/understand-ip/exploring-mit-open-source-license-comprehensive-guide).
