@@ -19,7 +19,7 @@ Platform: Electrosmith Daisy Seed
 Runtime: C++
 Supported hardware:
  - clectric Spark-AE
- - Electrosmith Pod
+ - Electrosmith Daisy Pod
 
 Description:
  This firmware demonstrates a basic example, written in C++, for the
@@ -30,26 +30,6 @@ License:
  This code is released under the MIT License.
  See the LICENSE file in the FLUX repository for details. 
 ```
-
-## FLUX Naming Convention
-Please create a folder for each FLUX that is prefixed with "FLUX-". Then use PascalCase to give your FLUX a descriptive name. Finally add "-extension" (from the list below) to identify the language used in the FLUX:
-- cpp
-- maxpat
-- ino
-- pd
-- rs
-
-Feel free to use your own preferred naming convention within the folder.
-
-### Result
-So, a Hello World FLUX written in Pure Data (Pd) would be named:
-> FLUX-HelloWorld-pd/helloWorld.pd
-
-### Initialization
-The [clectric Spark](https://github.com/clectric-diy/Spark-AE) and [clectric Shock](https://github.com/clectric-diy/Shock-AE) modules will ship with their Init FLUX:
-
-> FLUX-ShockInit-cpp/shockInit.cpp
-> FLUX-SparkInit-cpp/sparkInit.cpp
 
 ## License
 Every FLUX committed to this repository must be open sourced via the [MIT Open Source License](https://tlo.mit.edu/understand-ip/exploring-mit-open-source-license-comprehensive-guide).
