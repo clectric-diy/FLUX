@@ -1,10 +1,10 @@
 #include "daisysp.h"
-#include "daisy_pod.h"
+#include "daisy_flux.h"
 
 using namespace daisysp;
 using namespace daisy;
 
-static DaisyPod   pod;
+static DaisyFLUX  shock;
 static Oscillator osc, lfo;
 static MoogLadder flt;
 static AdEnv      ad;
@@ -70,9 +70,9 @@ int main(void)
     selfCycle = false;
 
     //Init everything
-    pod.Init();
-    pod.SetAudioBlockSize(4);
-    sample_rate = pod.AudioSampleRate();
+    shock.Init();
+    shock.SetAudioBlockSize(4);
+    sample_rate = shock.AudioSampleRate();
     osc.Init(sample_rate);
     flt.Init(sample_rate);
     ad.Init(sample_rate);
@@ -101,13 +101,13 @@ int main(void)
     ad.SetCurve(0.5);
 
     //set parameter parameters
-    cutoffParam.Init(pod.knob1, 100, 20000, cutoffParam.LOGARITHMIC);
-    pitchParam.Init(pod.knob2, 50, 5000, pitchParam.LOGARITHMIC);
-    lfoParam.Init(pod.knob1, 0.25, 1000, lfoParam.LOGARITHMIC);
+    cutoffParam.Init(shock.knob1, 100, 20000, cutoffParam.LOGARITHMIC);
+    pitchParam.Init(shock.knob2, 50, 5000, pitchParam.LOGARITHMIC);
+    lfoParam.Init(shock.knob1, 0.25, 1000, lfoParam.LOGARITHMIC);
 
     // start callback
-    pod.StartAdc();
-    pod.StartAudio(AudioCallback);
+    shock.StartAdc();
+    shock.StartAudio(AudioCallback);
 
     while(1) {}
 }
@@ -128,7 +128,7 @@ void ConditionalParameter(float  oldVal,
 //Controls Helpers
 void UpdateEncoder()
 {
-    wave += pod.encoder.RisingEdge();
+    wave += shock.encoder.RisingEdge();
     wave %= osc.WAVE_POLYBLEP_TRI;
 
     //skip ramp since it sounds like saw
@@ -139,14 +139,14 @@ void UpdateEncoder()
 
     osc.SetWaveform(wave);
 
-    mode += pod.encoder.Increment();
+    mode += shock.encoder.Increment();
     mode = (mode % 3 + 3) % 3;
 }
 
 void UpdateKnobs()
 {
-    k1 = pod.knob1.Process();
-    k2 = pod.knob2.Process();
+    k1 = shock.knob1.Process();
+    k2 = shock.knob2.Process();
 
     switch(mode)
     {
@@ -156,14 +156,14 @@ void UpdateKnobs()
             flt.SetFreq(cutoff);
             break;
         case 1:
-            ConditionalParameter(oldk1, k1, attack, pod.knob1.Process());
-            ConditionalParameter(oldk2, k2, release, pod.knob2.Process());
+            ConditionalParameter(oldk1, k1, attack, shock.knob1.Process());
+            ConditionalParameter(oldk2, k2, release, shock.knob2.Process());
             ad.SetTime(ADENV_SEG_ATTACK, attack);
             ad.SetTime(ADENV_SEG_DECAY, release);
             break;
         case 2:
             ConditionalParameter(oldk1, k1, lfoFreq, lfoParam.Process());
-            ConditionalParameter(oldk2, k2, lfoAmp, pod.knob2.Process());
+            ConditionalParameter(oldk2, k2, lfoAmp, shock.knob2.Process());
             lfo.SetFreq(lfoFreq);
             lfo.SetAmp(lfoAmp * 100);
         default: break;
@@ -172,23 +172,23 @@ void UpdateKnobs()
 
 void UpdateLeds()
 {
-    pod.led1.Set(mode == 2, mode == 1, mode == 0);
-    pod.led2.Set(0, selfCycle, selfCycle);
+    shock.led1.Set(mode == 2, mode == 1, mode == 0);
+    shock.led2.Set(0, selfCycle, selfCycle);
 
     oldk1 = k1;
     oldk2 = k2;
 
-    pod.UpdateLeds();
+    shock.UpdateLeds();
 }
 
 void UpdateButtons()
 {
-    if(pod.button1.RisingEdge() || (selfCycle && !ad.IsRunning()))
+    if(shock.button1.RisingEdge() || (selfCycle && !ad.IsRunning()))
     {
         ad.Trigger();
     }
 
-    if(pod.button2.RisingEdge())
+    if(shock.button2.RisingEdge())
     {
         selfCycle = !selfCycle;
     }
@@ -196,8 +196,8 @@ void UpdateButtons()
 
 void Controls()
 {
-    pod.ProcessAnalogControls();
-    pod.ProcessDigitalControls();
+    shock.ProcessAnalogControls();
+    shock.ProcessDigitalControls();
 
     UpdateEncoder();
 
