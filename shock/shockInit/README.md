@@ -1,14 +1,12 @@
 # Synth Voice
 
 ## Author
-
-Shensley
-
+Charles H. Leggett (chleggett)
 
 ## Description
 Simple Synth voice with resonant filter, self cycling envelope, and vibrato control.
 
-[Source Code](https://github.com/electro-smith/DaisyExamples/tree/master/pod/shockInit)
+[Source Code](https://github.com/clectric-diy/FLUX/tree/main/shock/shockInit)
 
 ## Controls
 | Control | Description | Comment |
@@ -25,9 +23,5 @@ Simple Synth voice with resonant filter, self cycling envelope, and vibrato cont
 | Knob 1 | Cutoff | Attack | Rate |
 | Knob 2 | Osc. Freq. | Decay | Depth |
 
-
-
-
-
-
-
+## Attribution
+Initally based on SynthVoice by Shensley from DaisyExamples
