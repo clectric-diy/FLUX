@@ -1,10 +1,10 @@
 # Project Name
-TARGET = ex_shockInit
+TARGET = ex_sparkInit
 
 USE_DAISYSP_LGPL = 1
 
 # Sources
-CPP_SOURCES = shockInit.cpp
+CPP_SOURCES = sparkInit.cpp
 
 # Library Locations
 LIBDAISY_DIR = ../../libDaisy

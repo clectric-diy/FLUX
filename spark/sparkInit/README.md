@@ -6,7 +6,7 @@ Charles H. Leggett (chleggett)
 ## Description
 Simple Synth voice with resonant filter, self cycling envelope, and vibrato control.
 
-[Source Code](https://github.com/clectric-diy/FLUX/tree/main/shock/shockInit)
+[Source Code](https://github.com/clectric-diy/FLUX/tree/main/spark/sparkInit)
 
 ## Controls
 | Control | Description | Comment |

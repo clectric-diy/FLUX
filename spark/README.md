@@ -1,1 +1,1 @@
-FLUX firmware for the Spark Module
+FLUX firmware for the clectric Spark Module
