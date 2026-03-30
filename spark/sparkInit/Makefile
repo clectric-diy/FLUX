@@ -1,10 +1,10 @@
 # Project Name
-TARGET = ex_sparkInit
+TARGET = ex_SparkInit
 
 USE_DAISYSP_LGPL = 1
 
 # Sources
-CPP_SOURCES = sparkInit.cpp
+CPP_SOURCES = SparkInit.cpp
 
 # Library Locations
 LIBDAISY_DIR = ../../libDaisy
