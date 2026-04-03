@@ -12,12 +12,13 @@ import subprocess
 ################################################################
 
 description = 'Helper script for managing Daisy examples, and creating new projects.'
+default_libs = pathlib.Path(__file__).resolve().parent.as_posix()
 usage = {
     'operation': 'Keyword argument for the desired helper action. Can be any of the following: create, copy, update, rebuild_all.',
     'destination': 'Second positional argument to set where the action should be applied. This is the final destination of the project.',
     'source': 'optional argument for selecting the project to copy from. required for the copy operation.',
     'board': 'optional argument for selecting the template when using the create operation. Default is seed. Options are: seed, field, patch, petal, pod, versio, legio, patch_sm',
-    'libs': 'optional argument for specifying the path containing libDaisy and DaisySP. Used with create and update. Default is ./spark/cpp .',
+    'libs': 'optional argument for specifying the path containing libDaisy and DaisySP. Used with create and update. Default is this script directory (spark/cpp).',
     'include_vgdb': 'optional flag for including debug files for Visual Studio and the VisualGDB extension. These are not included by default.'
 }
 supported_boards = ['seed', 'pod', 'patch',
@@ -301,7 +302,7 @@ def run():
     parser.add_argument('destination', help =usage.get('destination'), nargs='?')
     parser.add_argument('-s', '--source', help=usage.get('source'))
     parser.add_argument('-b', '--board', help=usage.get('board'), default='seed', choices=supported_boards)
-    parser.add_argument('-l', '--libs', help=usage.get('libs'), default='./spark/cpp')
+    parser.add_argument('-l', '--libs', help=usage.get('libs'), default=default_libs)
     parser.add_argument('--include_vgdb', help=usage.get('include_vgdb'),  action='store_true')
     args = parser.parse_args()
     op = args.operation.casefold()
