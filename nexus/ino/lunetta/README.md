@@ -1,6 +1,6 @@
-# NEXUS Lunetta: Generative Chaos Engine
+# Nexus Lunetta: Generative Chaos Engine
 
-**Living, breathing patches.** Lunetta transforms your NEXUS into a generative powerhouse, where algorithms continuously evolve your signal routing. Seven distinct modes create everything from subtle mutations to wild, unpredictable transformations—turning static patches into dynamic soundscapes.
+**Living, breathing patches.** Lunetta transforms your Nexus into a generative powerhouse, where algorithms continuously evolve your signal routing. Seven distinct modes create everything from subtle mutations to wild, unpredictable transformations—turning static patches into dynamic soundscapes.
 
 ## Generative Algorithms
 
@@ -29,7 +29,7 @@ Pure router mode for manual control. Switch back anytime to regain direct contro
 
 Lunetta doesn't just route signals—it evolves them. Set a tempo, choose an algorithm, and watch your patches transform themselves. What starts as a simple oscillator-to-filter connection becomes a living system of morphing connections.
 
-Combine with external modules for even more complexity: clock dividers create polyrhythms, LFOs modulate the tempo, sequencers control the mode selection. Lunetta turns NEXUS into a generative partner that co-creates with you.
+Combine with external modules for even more complexity: clock dividers create polyrhythms, LFOs modulate the tempo, sequencers control the mode selection. Lunetta turns Nexus into a generative partner that co-creates with you.
 
 ## Why Lunetta?
 

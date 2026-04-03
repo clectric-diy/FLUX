@@ -1,10 +1,10 @@
 /*
   ============================================================================
-  NEXUS ROUTER - 8x8 Analog Switch Matrix Router
+  Nexus Router - 8x8 Analog Switch Matrix Router
   ============================================================================
   FIRMWARE VARIANT: Base router functionality
   
-  This is the core router firmware for the NEXUS module - a programmable
+  This is the core router firmware for the Nexus module - a programmable
   8x8 analog switch matrix that can route any input to any output.
   Perfect for creating complex signal paths, audio routing, CV mixing,
   and modular synthesis patching.
@@ -25,12 +25,12 @@
   - OLED shows current matrix state and menu options
   
   SHARED CODE:
-  All I2C, EEPROM, display, and preset functions are in nexus_core.cpp/.h
+  All I2C, EEPROM, display, and preset functions are in ../core/nexus-core.cpp/.h
   This file implements the base router interface.
   ============================================================================
 */
 
-#include "nexus-core.h"
+#include "../core/nexus-core.h"
 
 // ============================================================================
 // ROUTER-SPECIFIC DEFINITIONS

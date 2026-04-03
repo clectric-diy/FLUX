@@ -1,6 +1,6 @@
-# NEXUS Router: Programmable Signal Matrix
+# Nexus Router: Programmable Signal Matrix
 
-**Complete routing freedom.** The Router firmware transforms NEXUS into a fully programmable 8x8 analog switch matrix. Route any input to any output, create complex signal paths, and build patches that would be impossible with traditional cables.
+**Complete routing freedom.** The Router firmware transforms Nexus into a fully programmable 8x8 analog switch matrix. Route any input to any output, create complex signal paths, and build patches that would be impossible with traditional cables.
 
 ## Core Features
 

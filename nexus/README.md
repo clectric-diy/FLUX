@@ -1,52 +1,46 @@
-# NEXUS Router: Pure Signal Control
+# Nexus Firmware (Arduino Runtime)
 
-**Master the matrix.** The Router variant gives you direct, hands-on control over NEXUS's 8×8 signal routing matrix. No algorithms, no automation—just pure, tactile patching that lets you explore signal flow in ways traditional cables never could.
+Nexus is an **8×8 analog switch matrix** for AE Modular—powered by the **ATmega4809-A** and **ADG2188**—that turns patching into an instrument.
 
-## What It Does
+Instead of repatching cables every time you want a new idea, Nexus lets you store, recall, and evolve routing states in firmware. It can be a clean utility one moment and a wild composition tool the next.
 
-Turn encoders to navigate the matrix grid on the OLED display. Each intersection represents a potential connection between inputs and outputs. Press buttons to create and break connections, auditioning your routing decisions in real-time.
+## Why Nexus is cool
 
-## Creative Flow
+- **64 possible crosspoints** in one compact module
+- **Instant routing changes** for performance and live experimentation
+- **Preset recall** to jump between patch states
+- **Multiple personalities**: manual router, generative engine, and sequencer
+- **AE-native mindset**: practical utility + creative chaos in one system
+- **Real hardware muscle**: ATmega4809-A control + ADG2188 analog crosspoint routing
 
-Start simple: route a single oscillator through different filters. Then experiment with complex signal paths—feedback loops, parallel processing, dynamic reconfiguration. The Router teaches you matrix thinking, where every connection is a creative decision.
+## Why build or buy one
 
-## Why Router First?
+- You get more mileage out of the modules you already own.
+- It unlocks patch ideas that are hard (or impossible) to do with cables alone.
+- It grows with you: start with Router, then explore Lunetta and Sequencer.
+- It is open-source and maker-friendly, so you can remix behavior to match your own workflow.
 
-This is where you learn NEXUS's language. Understanding manual routing builds intuition for the generative variants. It's minimal, focused, and endlessly creative—perfect for exploring patching possibilities without distraction.
+This layout is intentionally beginner-friendly so it's easy to find the right files quickly.
 
-## Getting Started
+## Directory Structure
 
-The interface is intuitive: encoders move your cursor, buttons toggle connections. Eight preset slots let you save and recall your favorite routings. The OLED shows your matrix state at a glance.
+```
+── ino/
+├── core/          # Shared hardware + matrix logic
+├── router/        # Manual 8x8 matrix routing
+├── lunetta/       # Generative logic/rhythm variants
+└── sequencer/     # Step-sequenced routing variant
+```
 
-**FLUX Variant:** Router  
-**File:** `nexus-router.ino` (~356 lines)  
-**Flash:** ~11 KB  
-**RAM:** ~0.3 KB  
-**FLUX Variant:** Router  
-**File:** `nexus-router.ino` (~356 lines)  
-**Flash:** ~11 KB  
-**RAM:** ~0.3 KB  
-**Difficulty:** Beginner-friendly  
-**License:** CERN-OHL-S | **Community:** [clectric.diy](https://clectric.diy)
+## Variants
 
-| Component | Pin | Type |
-|-----------|-----|------|
-| Encoder 1 A | 5 | Input |
-| Encoder 1 B | 6 | Input |
-| Encoder 1 Button | 7 | Input |
-| Encoder 2 A | 8 | Input |
-| Encoder 2 B | 9 | Input |
-| Encoder 2 Button | 10 | Input |
-| I2C SDA | PA2 | I2C |
-| I2C SCL | PA3 | I2C |
+- [Router](ino/router/README.md) — direct, hands-on matrix routing
+- [Lunetta](ino/lunetta/README.md) — generative and algorithmic behavior
+- [Sequencer](ino/sequencer/README.md) — timed routing patterns
 
-## Customization
+## Notes
 
-This is the perfect base for learning and extending:
+- The shared implementation is in `ino/core/` and reused by all variants.
+- If you are new to Nexus, start with `ino/router/`.
 
-1. **Add new modes**: Extend the UI state machine
-2. **Add external clock input**: Connect clock to a pin and advance via external timing
-3. **Add CV output**: Use PWM pins to generate control voltages based on matrix state
-4. **Add MIDI support**: Use Serial to implement MIDI note/CC mapping
-
-All shared hardware functions (I2C, EEPROM, display) are available via `#include "nexus-core.h"`
+Community: [clectric.diy](https://clectric.diy)

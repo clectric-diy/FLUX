@@ -1,6 +1,6 @@
 /*
   ============================================================================
-  NEXUS CORE - Shared hardware abstraction and UI framework
+  Nexus Core - Shared hardware abstraction and UI framework
   ============================================================================
   This header contains all shared definitions, classes, and function declarations
   for the Nexus firmware family (router, lunetta, sequencer).

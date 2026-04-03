@@ -1,195 +1,286 @@
 /*
   ============================================================================
-  NEXUS SEQUENCER - 8x8 Analog Switch Matrix with Step Sequencer
+  NEXUS LUNETTA - 8x8 Analog Switch Matrix with Generative Engine
   ============================================================================
-  FIRMWARE VARIANT: Router + 16-step pattern sequencer
+  FIRMWARE VARIANT: Router + Lunetta-style bitwise chaos engine
   
-  This variant extends the base router with a step sequencer for creating
-  rhythmic routing patterns. Program 16 steps of matrix configurations,
-  advance through them via internal or external clock, and create
-  complex rhythmic patches.
+  This variant extends the base router with a generative rhythm engine inspired
+  by the "Lunetta" modular synthesis approach - using simple logic gates and
+  XOR operations to create chaotic but musicality patterns.
   
   Features:
   - All router functionality (signal routing + 8x8 matrix)
-  - 16-step sequencer with independent pattern storage
-  - Step editing: turn encoder to select step, click to edit current step
-  - Internal or external clock input (via future hardware)
+  - Generative XOR/AND/NAND/SHIFT rhythm patterns
+  - LFSR (Linear Feedback Shift Register) sequencing
+  - Rungler-style random pattern generator
   - Tempo control via encoder, BPM display
-  - Swing/shuffle timing adjustment
-  - Pattern storage/recall with EEPROM
+  - Menu mode for selecting generative algorithm
   
   Hardware: ATmega4809-A (TQFP-48) @ 5V logic
   Ecosystem: AE Modular standard (0-5V signals)
   
   INTERACTION:
-  - ROUTING_MODE: Edit the current step's matrix configuration
-  - MENU_MODE: Select step (Encoder 1), adjust tempo (Encoder 2)
-  - Clock input advances sequencer automatically
+  - All ROUTING_MODE controls work identically to router
+  - MENU_MODE now has: Encoder 1 (Y) = select generative mode
+                       Encoder 2 (X) = adjust BPM/tempo
+  - Modes available: OFF, XOR-RHYTHM, AND-RHYTHM, NAND-RHYTHM, SHIFT-RHYTHM, LFSR, RUNGLER
   
   SHARED CODE:
-  All I2C, EEPROM, display, and preset functions are in nexus_core.cpp/.h
-  This file extends the router with step sequencer logic.
+  All I2C, EEPROM, display, and preset functions are in ../core/nexus-core.cpp/.h
+  This file extends the router with generative logic.
   ============================================================================
 */
 
-#include "nexus-core.h"
+#include "../core/nexus-core.h"
 
 // ============================================================================
-// STEP SEQUENCER DEFINITIONS
+// LUNETTA GENERATIVE ENGINE DEFINITIONS
 // ============================================================================
 
-#define ENABLE_STEP_SEQUENCER 1
-#define SEQUENCER_STEPS 16
+#define ENABLE_LUNETTA_GENERATIVE 1
 
-// Step sequence storage
-// stepSeqMatrix[step][row] represents the patchMatrix configuration for that step
-PresetState stepSeqMatrix[SEQUENCER_STEPS];
-
-// Sequencer state variables
-byte currentStep = 0;               // Current step being played (0-15)
-byte editStep = 0;                  // Current step being edited (0-15)
-byte sequencerBPM = 120;            // Tempo in beats per minute
-byte sequencerSwing = 0;            // Swing percentage (0-100)
-bool isSequencerRunning = false;    // Sequencer playback state
-unsigned long sequencerTickMs = 0;  // Timestamp for step advance
-
-// Mode for sequencer interaction
-enum SequencerEditMode {
-  SEQ_PLAY,       // Playing back sequence
-  SEQ_EDIT_STEP,  // Editing step configuration
-  SEQ_EDIT_TIMING // Editing tempo/swing
+// Generative mode enumeration
+enum GenerativeMode {
+  MODE_OFF,           // No generative logic (pure router)
+  MODE_XOR_RHYTHM,    // XOR-based rhythm generator
+  MODE_AND_RHYTHM,    // AND-based rhythm generator
+  MODE_NAND_RHYTHM,   // NAND-based rhythm generator
+  MODE_SHIFT_RHYTHM,  // Shift-register rhythm
+  MODE_LFSR,          // Linear Feedback Shift Register
+  MODE_RUNGLER        // Rungler-inspired random sequences
 };
 
-SequencerEditMode seqEditMode = SEQ_PLAY;
+// Generative state variables
+GenerativeMode generativeMode = MODE_OFF;
+byte generativeBPM = 120;           // Tempo in beats per minute
+unsigned long generativeTickMs = 0; // Timestamp for rhythm generator
+byte lfsrState = 0x01;              // LFSR internal state (must not be 0)
+byte runglerCounter = 0;            // Rungler counter/sequencer position
+
+// Interval between generative ticks (milliseconds)
+// Formula: (60000 / BPM) / 4 = sixteenth-note interval
+unsigned long getGenerativeInterval() {
+  return (60000 / generativeBPM) / 4;
+}
 
 // ============================================================================
-// STEP SEQUENCER FUNCTIONS
+// GENERATIVE ENGINE FUNCTIONS
 // ============================================================================
 
-unsigned long getSequencerInterval() {
-  // Calculate milliseconds per step
-  // 16 steps per beat, so: (60000 / BPM) / 4 = sixteenth-note interval
-  return (60000 / sequencerBPM) / 4;
-}
-
-void playbackSequencerStep(byte stepNum) {
-  // Load the patchMatrix configuration for the specified step
+void updateGenerativeLogic() {
+  // Main generative engine update - called each loop
   
-  if (stepNum >= SEQUENCER_STEPS) return;
-  
-  activeState = stepSeqMatrix[stepNum];
-  writePatchMatrixToADG2188();
-  
-  currentStep = stepNum;
-  flagDisplayUpdate = true;
-  
-  DEBUG_PRINTF("[SEQUENCER] Step %d playback\n", stepNum);
-}
-
-void advanceSequencer() {
-  // Advance to next step in sequence
-  
-  if (!isSequencerRunning) return;
-  
-  currentStep = (currentStep + 1) % SEQUENCER_STEPS;
-  playbackSequencerStep(currentStep);
-}
-
-void updateSequencerPlayback() {
-  // Called each loop to advance sequencer based on tempo
-  
-  if (!isSequencerRunning) return;
+  if (generativeMode == MODE_OFF) return;
   
   unsigned long now = millis();
-  unsigned long interval = getSequencerInterval();
+  unsigned long interval = getGenerativeInterval();
   
-  if ((now - sequencerTickMs) >= interval) {
-    sequencerTickMs = now;
-    advanceSequencer();
+  if ((now - generativeTickMs) < interval) return;
+  generativeTickMs = now;
+  
+  // Execute generative algorithm based on selected mode
+  switch (generativeMode) {
+    case MODE_XOR_RHYTHM:
+      updateXORRhythm();
+      break;
+    case MODE_AND_RHYTHM:
+      updateANDRhythm();
+      break;
+    case MODE_NAND_RHYTHM:
+      updateNANDRhythm();
+      break;
+    case MODE_SHIFT_RHYTHM:
+      updateShiftRhythm();
+      break;
+    case MODE_LFSR:
+      updateLFSR();
+      break;
+    case MODE_RUNGLER:
+      updateRungler();
+      break;
+    default:
+      break;
   }
-}
-
-void editSequencerStep(byte stepNum) {
-  // Enter edit mode for specified step
   
-  if (stepNum >= SEQUENCER_STEPS) return;
-  
-  editStep = stepNum;
-  activeState = stepSeqMatrix[stepNum];
-  seqEditMode = SEQ_EDIT_STEP;
-  
-  DEBUG_PRINTF("[SEQUENCER] Edit mode: Step %d\n", stepNum);
   flagDisplayUpdate = true;
 }
 
-void saveSequencerStep() {
-  // Save current activeState back to step sequence
+void updateXORRhythm() {
+  // XOR-based chaos: toggle entries based on XOR logic
+  // Creates rhythm patterns by XORing random positions
   
-  stepSeqMatrix[editStep] = activeState;
-  flagSaveNeeded = true;
+  static byte counter = 0;
   
-  DEBUG_PRINTF("[SEQUENCER] Step %d saved\n", editStep);
+  // XOR a pseudo-random row with a pseudo-random column
+  byte rowToMutate = (counter ^ (counter >> 1)) % MATRIX_SIZE;
+  byte colToMutate = ((counter * 13) ^ (counter >> 2)) % MATRIX_SIZE;
+  
+  // Toggle this entry with some probability
+  if ((counter & 0x03) == 0) {  // Mutate every 4 ticks
+    activeState.toggleEntry(rowToMutate, colToMutate);
+    flagSaveNeeded = true;
+    writePatchMatrixToADG2188();
+  }
+  
+  counter++;
+  
+  DEBUG_PRINTF("[LUNETTA] XOR mutation at %d,%d\n", rowToMutate, colToMutate);
 }
 
-void toggleSequencerPlayback() {
-  // Start/stop sequencer playback
+void updateANDRhythm() {
+  // AND-based pattern: apply AND logic to matrix positions
+  // Creates more stable/predictable patterns than XOR
   
-  isSequencerRunning = !isSequencerRunning;
+  static byte counter = 0;
   
-  if (isSequencerRunning) {
-    sequencerTickMs = millis();
-    currentStep = 0;
-    playbackSequencerStep(0);
-    DEBUG_PRINTLN(F("[SEQUENCER] Playback started"));
+  byte rowToMutate = counter % MATRIX_SIZE;
+  byte colToMutate = (counter / MATRIX_SIZE) % MATRIX_SIZE;
+  
+  // Apply AND logic: only keep switches that satisfy condition
+  if ((rowToMutate & colToMutate) > 0) {
+    activeState.setEntry(rowToMutate, colToMutate, true);
   } else {
-    DEBUG_PRINTLN(F("[SEQUENCER] Playback stopped"));
+    activeState.setEntry(rowToMutate, colToMutate, false);
   }
   
-  flagDisplayUpdate = true;
+  counter++;
+  if (counter >= (MATRIX_SIZE * MATRIX_SIZE)) counter = 0;
+  
+  flagSaveNeeded = true;
+  writePatchMatrixToADG2188();
+  
+  DEBUG_PRINTF("[LUNETTA] AND pattern at %d,%d\n", rowToMutate, colToMutate);
+}
+
+void updateNANDRhythm() {
+  // NAND-based pattern: inverted AND logic
+  // Creates inverted/complementary patterns
+  
+  static byte counter = 0;
+  
+  byte rowToMutate = counter % MATRIX_SIZE;
+  byte colToMutate = (counter / MATRIX_SIZE) % MATRIX_SIZE;
+  
+  // Apply NAND logic: inverted AND
+  if ((rowToMutate & colToMutate) == 0) {
+    activeState.setEntry(rowToMutate, colToMutate, true);
+  } else {
+    activeState.setEntry(rowToMutate, colToMutate, false);
+  }
+  
+  counter++;
+  if (counter >= (MATRIX_SIZE * MATRIX_SIZE)) counter = 0;
+  
+  flagSaveNeeded = true;
+  writePatchMatrixToADG2188();
+  
+  DEBUG_PRINTF("[LUNETTA] NAND pattern at %d,%d\n", rowToMutate, colToMutate);
+}
+
+void updateShiftRhythm() {
+  // Shift-register pattern: rotate/shift bits through matrix
+  // Creates rhythmic patterns from bit shifting
+  
+  static byte shiftPattern = 0x01;
+  
+  for (int row = 0; row < MATRIX_SIZE; row++) {
+    byte newRow = (shiftPattern << row) | (shiftPattern >> (8 - row));
+    
+    for (int col = 0; col < MATRIX_SIZE; col++) {
+      bool bitState = bitRead(newRow, col);
+      activeState.setEntry(row, col, bitState);
+    }
+  }
+  
+  shiftPattern = (shiftPattern << 1) | (shiftPattern >> 7);
+  
+  flagSaveNeeded = true;
+  writePatchMatrixToADG2188();
+  
+  DEBUG_PRINTF("[LUNETTA] Shift pattern: 0x%02X\n", shiftPattern);
+}
+
+void updateLFSR() {
+  // Linear Feedback Shift Register: pseudo-random sequence
+  // Uses Galois/XOR LFSR for 8-bit maximal-length sequence
+  
+  // Tap positions for 8-bit LFSR: x^8 + x^6 + x^5 + x^4 + 1
+  byte lsb = lfsrState & 1;
+  lfsrState >>= 1;
+  if (lsb) {
+    lfsrState ^= 0xB8;  // Taps at bits 7,5,4,3
+  }
+  
+  // Use LFSR state to set matrix pattern
+  for (int row = 0; row < MATRIX_SIZE; row++) {
+    byte rowPattern = (lfsrState ^ (row * 0x55)) & 0xFF;
+    
+    for (int col = 0; col < MATRIX_SIZE; col++) {
+      bool bitState = bitRead(rowPattern, col);
+      activeState.setEntry(row, col, bitState);
+    }
+  }
+  
+  flagSaveNeeded = true;
+  writePatchMatrixToADG2188();
+  
+  DEBUG_PRINTF("[LUNETTA] LFSR state: 0x%02X\n", lfsrState);
+}
+
+void updateRungler() {
+  // Rungler: combines counter and shift register for rhythmic variation
+  // Inspired by the Rungler module in AE Modular
+  
+  static byte runglerShift = 0x01;
+  
+  // Rungler algorithm: use counter to index into shift pattern
+  byte currentPattern = runglerShift ^ runglerCounter;
+  
+  for (int row = 0; row < MATRIX_SIZE; row++) {
+    byte rowPattern = (currentPattern ^ (row << 1)) & 0xFF;
+    
+    for (int col = 0; col < MATRIX_SIZE; col++) {
+      bool bitState = bitRead(rowPattern, col);
+      activeState.setEntry(row, col, bitState);
+    }
+  }
+  
+  runglerCounter++;
+  runglerShift = (runglerShift << 1) | (runglerShift >> 7);
+  
+  flagSaveNeeded = true;
+  writePatchMatrixToADG2188();
+  
+  DEBUG_PRINTF("[LUNETTA] Rungler: counter=%d, shift=0x%02X\n", runglerCounter, runglerShift);
 }
 
 // ============================================================================
-// MENU MODE HANDLERS (SEQUENCER-SPECIFIC)
+// MENU MODE HANDLERS (LUNETTA-SPECIFIC)
 // ============================================================================
 
 void handleMenuEncoder1(int8_t delta) {
-  // Encoder 1 in menu mode: select step to edit
+  // Encoder 1 in menu mode: select generative mode
   
-  if (seqEditMode == SEQ_EDIT_STEP) {
-    if (delta > 0) {
-      editStep = (editStep + 1) % SEQUENCER_STEPS;
-    } else if (delta < 0) {
-      editStep = (editStep - 1 + SEQUENCER_STEPS) % SEQUENCER_STEPS;
-    }
-    
-    // Load the selected step for editing
-    activeState = stepSeqMatrix[editStep];
-    
-    DEBUG_PRINTF("[SEQUENCER] Edit step: %d\n", editStep);
-    flagDisplayUpdate = true;
-  } else if (seqEditMode == SEQ_EDIT_TIMING) {
-    // Alternative: use for tempo control
-    if (delta > 0) {
-      sequencerBPM = min(sequencerBPM + 5, 240);
-    } else if (delta < 0) {
-      sequencerBPM = max(sequencerBPM - 5, 30);
-    }
-    
-    DEBUG_PRINTF("[SEQUENCER] BPM: %d\n", sequencerBPM);
-    flagDisplayUpdate = true;
+  if (delta > 0) {
+    generativeMode = (GenerativeMode)((generativeMode + 1) % 7);
+  } else if (delta < 0) {
+    generativeMode = (GenerativeMode)((generativeMode - 1 + 7) % 7);
   }
+  
+  DEBUG_PRINTF("[LUNETTA] Generative mode: %d\n", generativeMode);
+  flagDisplayUpdate = true;
 }
 
 void handleMenuEncoder2(int8_t delta) {
-  // Encoder 2 in menu mode: adjust tempo or swing
+  // Encoder 2 in menu mode: adjust BPM
   
   if (delta > 0) {
-    sequencerBPM = min(sequencerBPM + 5, 240);
+    generativeBPM = min(generativeBPM + 5, 240);
   } else if (delta < 0) {
-    sequencerBPM = max(sequencerBPM - 5, 30);
+    generativeBPM = max(generativeBPM - 5, 30);
   }
   
-  DEBUG_PRINTF("[SEQUENCER] BPM: %d\n", sequencerBPM);
+  DEBUG_PRINTF("[LUNETTA] BPM: %d\n", generativeBPM);
   flagDisplayUpdate = true;
 }
 
@@ -291,7 +382,7 @@ void processEncoderInput() {
 void checkEncoderButtons() {
   unsigned long now = millis();
   
-  // Check Encoder 1 button (confirmation in ROUTING_MODE, step edit in MENU_MODE)
+  // Check Encoder 1 button (confirmation in ROUTING_MODE)
   static bool encoder1Down = false;
   static unsigned long encoder1PressTime = 0;
   
@@ -307,24 +398,17 @@ void checkEncoderButtons() {
     unsigned long pressDuration = now - encoder1PressTime;
     
     if (pressDuration < 500) {
-      // Short press: toggle matrix entry (in routing mode) or save step (in menu)
+      // Short press: toggle matrix entry
       if (uiMode == ROUTING_MODE) {
         activeState.toggleEntry(auditingY, auditingX);
         flagSaveNeeded = true;
         flagDisplayUpdate = true;
         DEBUG_PRINTF("[BTN1] Toggle X:%d Y:%d\n", auditingX, auditingY);
         writePatchMatrixToADG2188();
-        
-        // If we're editing a step in the sequencer, save the change
-        if (seqEditMode == SEQ_EDIT_STEP) {
-          saveSequencerStep();
-        }
       }
     } else {
-      // Long press: enter step edit mode or toggle playback
-      if (uiMode == MENU_MODE) {
-        toggleSequencerPlayback();
-      }
+      // Long press: reserved for future use
+      DEBUG_PRINTLN(F("[BTN1] Long press"));
     }
   }
   
@@ -356,14 +440,9 @@ void handleModeChange() {
   if (uiMode == ROUTING_MODE) {
     uiMode = MENU_MODE;
     stopAuditioning();
-    seqEditMode = SEQ_EDIT_STEP;
-    editSequencerStep(0);  // Start editing from step 0
     DEBUG_PRINTLN(F("[MODE] -> MENU_MODE"));
   } else {
     uiMode = ROUTING_MODE;
-    if (isSequencerRunning) {
-      playbackSequencerStep(currentStep);
-    }
     DEBUG_PRINTLN(F("[MODE] -> ROUTING_MODE"));
   }
   
@@ -380,8 +459,8 @@ void setup() {
     while (!Serial && millis() < 3000) {
       delay(10);
     }
-    DEBUG_PRINTLN(F("\n=== NEXUS SEQUENCER STARTING ==="));
-    DEBUG_PRINTLN(F("VARIANT: Router + 16-Step Sequencer"));
+    DEBUG_PRINTLN(F("\n=== NEXUS LUNETTA STARTING ==="));
+    DEBUG_PRINTLN(F("VARIANT: Router + Bitwise Generative Engine"));
   }
   
   // Initialize I2C bus
@@ -399,7 +478,7 @@ void setup() {
     display.setTextColor(SSD1306_WHITE);
     display.clearDisplay();
     display.setCursor(0, 0);
-    display.println(F("NEXUS SEQUENCER"));
+    display.println(F("NEXUS LUNETTA"));
     display.println(F("Initializing..."));
     display.display();
   }
@@ -423,16 +502,18 @@ void setup() {
   // Initialize ADG2188 switches via I2C
   initializeADG2188();
   
-  // Load last active preset from EEPROM (step 0)
+  // Load last active preset from EEPROM
   loadPresetFromEEPROM(0);
-  stepSeqMatrix[0] = activeState;
   
-  // Initialize remaining sequencer steps to empty
-  for (int i = 1; i < SEQUENCER_STEPS; i++) {
-    stepSeqMatrix[i].clear();
-  }
+  // Initialize LFSR with non-zero seed
+  lfsrState = 0x55;
   
-  DEBUG_PRINTLN(F("[SETUP] Sequencer initialized"));
+  DEBUG_PRINTLN(F("[SETUP] EEPROM state loaded"));
+  DEBUG_PRINTLN(F("[SETUP] Generative engine initialized"));
+  
+  // Update display with initial state
+  flagDisplayUpdate = true;
+  
   DEBUG_PRINTLN(F("[SETUP] Initialization complete\n"));
 }
 
@@ -462,9 +543,9 @@ void loop() {
     updateMatrixAuditioning();
   }
   
-  // Update sequencer playback (only if running)
-  if (isSequencerRunning) {
-    updateSequencerPlayback();
+  // Update generative engine (only in ROUTING_MODE for continuous generation)
+  if (uiMode == ROUTING_MODE && generativeMode != MODE_OFF) {
+    updateGenerativeLogic();
   }
   
   // Opportunistic EEPROM save
