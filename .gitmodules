@@ -1,9 +1,9 @@
 [submodule "libDaisy"]
-	path = libDaisy
+	path = spark/cpp/libDaisy
 	url = https://github.com/clectric-diy/libDaisy.git
 [submodule "DaisySP"]
-	path = DaisySP
+	path = spark/cpp/DaisySP
 	url = https://github.com/clectric-diy/DaisySP.git
 [submodule "stmlib"]
-	path = stmlib
+	path = spark/cpp/stmlib
 	url = https://github.com/clectric-diy/stmlib.git
