@@ -15,10 +15,10 @@
 
 ### 1. Repository Structure & Scope
 - **nexus/**: Arduino-based firmware
-  - **nexus/ino/core/**: Shared Nexus hardware/matrix implementation (`nexus-core.h/.cpp`)
-  - **nexus/ino/router/**: Pure signal routing variant
-  - **nexus/ino/lunetta/**: Generative chaos engine variant
-  - **nexus/ino/sequencer/**: Step pattern sequencer variant
+  - **nexus/core/**: Shared Nexus hardware/matrix implementation (`nexus-core.h/.cpp`)
+  - **nexus/router/**: Pure signal routing variant
+  - **nexus/lunetta/**: Generative chaos engine variant
+  - **nexus/sequencer/**: Step pattern sequencer variant
 - **spark/**: Spark runtimes and firmware workflows
   - **spark/cpp/**: Main C++ workflow; contains `libDaisy`, `DaisySP`, and `stmlib` submodules, Spark BSP (`daisy_spark.h/.cpp`), `helper.py`, `ci/`, and projects like `spark-init/`
   - **spark/ino/**, **spark/max/**, **spark/pd/**, **spark/rs/**: Additional Spark runtime ecosystems (Arduino, Max, Pure Data, Rust)
@@ -41,7 +41,7 @@
 - **clectric.diy**: Lowercase, always with the dot; refers to the community and online makerspace
 - **FLUX**: All caps for the firmware platform/brand
 - **Nexus, Spark, Arc, Shock**: Capitalized for module names
-- **Directory names**: Lowercase for URLs and file paths (e.g., `nexus/ino/lunetta/`)
+- **Directory names**: Lowercase for URLs and file paths (e.g., `nexus/lunetta/`)
 
 ### 5. Development Guidelines
 - **Modular Design**: Shared code in core libraries, variant-specific in subfolders
@@ -49,13 +49,13 @@
 - **Testing**: Each module/variant should compile and run independently
 - **Hardware Compatibility**: AE Modular standard (0-5V), Daisy Seed, ATmega4809-A, I2C/SPI expansion for Arc modules
 - **Post-refactor path convention**: Spark library/tooling paths now live under `spark/cpp/` (not repo root). Prefer script-relative path resolution in tooling and CI.
-- **Nexus runtime convention**: Arduino projects live under `nexus/ino/`; keep shared implementation in `nexus/ino/core/` and variants in sibling folders.
+- **Nexus runtime convention**: Arduino projects live directly under `nexus/`; keep shared implementation in `nexus/core/` and variants in sibling folders.
 
 ### 6. Post-Refactor Guardrails (Current State)
 - **Do not reintroduce old root paths**: `libDaisy/`, `DaisySP/`, `stmlib/`, `helper.py`, and `ci/` are under `spark/cpp/`.
 - **Spark build/tooling references** should target `spark/cpp/...` and remain script-relative where possible.
-- **Nexus shared includes** in variants should use `../core/nexus-core.h` from `nexus/ino/{router,lunetta,sequencer}/`.
-- **Runtime discoverability matters**: prefer explicit runtime folders like `nexus/ino/` and `spark/{cpp,ino,max,pd,rs}/` for beginner clarity.
+- **Nexus shared includes** in variants should use `../core/nexus-core.h` from `nexus/{router,lunetta,sequencer}/`.
+- **Runtime discoverability matters**: prefer explicit runtime folders like `nexus/{core,router,lunetta,sequencer}` and `spark/{cpp,ino,max,pd,rs}/` for beginner clarity.
 - **Brand/module style**: use `Nexus` (not all-caps) in user-facing docs.
 
 ## Quick References
@@ -71,11 +71,10 @@
 ```
 FLUX/
 ├── nexus/               # Arduino-based AE Modular switch matrix
-│   └── ino/             # Arduino runtime projects
-│       ├── core/        # Shared hardware + matrix implementation
-│       ├── router/      # Pure signal routing
-│       ├── lunetta/     # Generative chaos engine
-│       └── sequencer/   # Step pattern sequencer
+│   ├── core/            # Shared hardware + matrix implementation
+│   ├── router/          # Pure signal routing
+│   ├── lunetta/         # Generative chaos engine
+│   └── sequencer/       # Step pattern sequencer
 ├── spark/               # Daisy Seed-based module(s)
 │   └── cpp/             # C++ firmware and build dependencies
 │       ├── libDaisy/    # Daisy Seed HAL (git submodule)

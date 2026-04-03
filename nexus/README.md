@@ -25,7 +25,7 @@ This layout is intentionally beginner-friendly so it's easy to find the right fi
 ## Directory Structure
 
 ```
-── ino/
+nexus/
 ├── core/          # Shared hardware + matrix logic
 ├── router/        # Manual 8x8 matrix routing
 ├── lunetta/       # Generative logic/rhythm variants
@@ -34,13 +34,13 @@ This layout is intentionally beginner-friendly so it's easy to find the right fi
 
 ## Variants
 
-- [Router](ino/router/README.md) — direct, hands-on matrix routing
-- [Lunetta](ino/lunetta/README.md) — generative and algorithmic behavior
-- [Sequencer](ino/sequencer/README.md) — timed routing patterns
+- [Router](router/README.md) — direct, hands-on matrix routing
+- [Lunetta](lunetta/README.md) — generative and algorithmic behavior
+- [Sequencer](sequencer/README.md) — timed routing patterns
 
 ## Notes
 
-- The shared implementation is in `ino/core/` and reused by all variants.
-- If you are new to Nexus, start with `ino/router/`.
+- The shared implementation is in `core/` and reused by all variants.
+- If you are new to Nexus, start with `router/`.
 
 Community: [clectric.diy](https://clectric.diy)
