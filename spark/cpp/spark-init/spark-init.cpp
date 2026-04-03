@@ -1,20 +1,21 @@
 #include "daisysp.h"
-#include "daisy_spark.h"
+#include "../daisy_spark.h"
 
+using namespace daisy;
 using namespace spark;
 using namespace daisysp;
 
-static Spark   spark;
+static Spark hw;
 
 // DSP Objects
 static Oscillator osc, lfo;
-static MoogLadder flt-ladder;
+static MoogLadder flt;
 static AdEnv      ad;
 static Parameter  pitchParam, cutoffParam, lfoParam;
 
 int   wave, mode;
 float vibrato, oscFreq, lfoFreq, lfoAmp, attack, release, cutoff;
-float prevPot1, prevPot2, pot1, pot2;
+float oldk1, oldk2, k1, k2;
 bool  selfCycle;
 
 void ConditionalParameter(float  oldVal,
@@ -72,9 +73,9 @@ int main(void)
     selfCycle = false;
 
     //Init everything
-    spark.Init();
-    spark.SetAudioBlockSize(4);
-    sample_rate = spark.AudioSampleRate();
+    hw.Init();
+    hw.SetAudioBlockSize(4);
+    sample_rate = hw.AudioSampleRate();
     osc.Init(sample_rate);
     flt.Init(sample_rate);
     ad.Init(sample_rate);
@@ -103,13 +104,13 @@ int main(void)
     ad.SetCurve(0.5);
 
     //set parameter parameters
-    cutoffParam.Init(spark.knob1, 100, 20000, cutoffParam.LOGARITHMIC);
-    pitchParam.Init(spark.knob2, 50, 5000, pitchParam.LOGARITHMIC);
-    lfoParam.Init(spark.knob1, 0.25, 1000, lfoParam.LOGARITHMIC);
+    cutoffParam.Init(hw.knob1, 100, 20000, cutoffParam.LOGARITHMIC);
+    pitchParam.Init(hw.knob2, 50, 5000, pitchParam.LOGARITHMIC);
+    lfoParam.Init(hw.knob1, 0.25, 1000, lfoParam.LOGARITHMIC);
 
     // start callback
-    spark.StartAdc();
-    spark.StartAudio(AudioCallback);
+    hw.StartAdc();
+    hw.StartAudio(AudioCallback);
 
     while(1) {}
 }
@@ -130,7 +131,7 @@ void ConditionalParameter(float  oldVal,
 //Controls Helpers
 void UpdateEncoder()
 {
-    wave += spark.encoder.RisingEdge();
+    wave += hw.encoder.RisingEdge();
     wave %= osc.WAVE_POLYBLEP_TRI;
 
     //skip ramp since it sounds like saw
@@ -141,14 +142,14 @@ void UpdateEncoder()
 
     osc.SetWaveform(wave);
 
-    mode += spark.encoder.Increment();
+    mode += hw.encoder.Increment();
     mode = (mode % 3 + 3) % 3;
 }
 
 void UpdateKnobs()
 {
-    k1 = spark.knob1.Process();
-    k2 = spark.knob2.Process();
+    k1 = hw.knob1.Process();
+    k2 = hw.knob2.Process();
 
     switch(mode)
     {
@@ -158,14 +159,14 @@ void UpdateKnobs()
             flt.SetFreq(cutoff);
             break;
         case 1:
-            ConditionalParameter(oldk1, k1, attack, spark.knob1.Process());
-            ConditionalParameter(oldk2, k2, release, spark.knob2.Process());
+            ConditionalParameter(oldk1, k1, attack, hw.knob1.Process());
+            ConditionalParameter(oldk2, k2, release, hw.knob2.Process());
             ad.SetTime(ADENV_SEG_ATTACK, attack);
             ad.SetTime(ADENV_SEG_DECAY, release);
             break;
         case 2:
             ConditionalParameter(oldk1, k1, lfoFreq, lfoParam.Process());
-            ConditionalParameter(oldk2, k2, lfoAmp, spark.knob2.Process());
+            ConditionalParameter(oldk2, k2, lfoAmp, hw.knob2.Process());
             lfo.SetFreq(lfoFreq);
             lfo.SetAmp(lfoAmp * 100);
         default: break;
@@ -174,23 +175,23 @@ void UpdateKnobs()
 
 void UpdateLeds()
 {
-    spark.led1.Set(mode == 2, mode == 1, mode == 0);
-    spark.led2.Set(0, selfCycle, selfCycle);
+    hw.led1.Set(mode == 2, mode == 1, mode == 0);
+    hw.led2.Set(0, selfCycle, selfCycle);
 
     oldk1 = k1;
     oldk2 = k2;
 
-    spark.UpdateLeds();
+    hw.UpdateLeds();
 }
 
 void UpdateButtons()
 {
-    if(spark.button1.RisingEdge() || (selfCycle && !ad.IsRunning()))
+    if(hw.button1.RisingEdge() || (selfCycle && !ad.IsRunning()))
     {
         ad.Trigger();
     }
 
-    if(spark.button2.RisingEdge())
+    if(hw.button2.RisingEdge())
     {
         selfCycle = !selfCycle;
     }
@@ -198,8 +199,8 @@ void UpdateButtons()
 
 void Controls()
 {
-    spark.ProcessAnalogControls();
-    spark.ProcessDigitalControls();
+    hw.ProcessAnalogControls();
+    hw.ProcessDigitalControls();
 
     UpdateEncoder();
 

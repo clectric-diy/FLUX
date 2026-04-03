@@ -1,4 +1,4 @@
-# SparkInit
+# spark-init
 
 ## Author
 Charles H. Leggett (chleggett)
@@ -6,7 +6,7 @@ Charles H. Leggett (chleggett)
 ## Description
 The initial firmware flashed onto the clectric Spark module.
 
-[Source Code](https://github.com/clectric-diy/FLUX/tree/main/spark/SparkInit)
+[Source Code](https://github.com/clectric-diy/FLUX/tree/main/spark/cpp/spark-init)
 
 ## Controls
 
