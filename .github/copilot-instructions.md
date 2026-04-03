@@ -14,12 +14,14 @@
 ## What AI agents should know first
 
 ### 1. Repository Structure & Scope
-- **nexus/**: Arduino-based firmware, modular architecture:
-  - **router/**: Pure signal routing
-  - **lunetta/**: Generative chaos engine
-  - **sequencer/**: Step pattern sequencer
-- **spark/**: Daisy Seed-based firmware, libDaisy/DaisySP/stmlib, multiple submodules
-  - **SparkInit/**: Main firmware for Spark module, initially based on SynthVoice from DaisyExamples, expanding to include effects, looper, and other features
+- **nexus/**: Arduino-based firmware
+  - **nexus/ino/core/**: Shared Nexus hardware/matrix implementation (`nexus-core.h/.cpp`)
+  - **nexus/ino/router/**: Pure signal routing variant
+  - **nexus/ino/lunetta/**: Generative chaos engine variant
+  - **nexus/ino/sequencer/**: Step pattern sequencer variant
+- **spark/**: Spark runtimes and firmware workflows
+  - **spark/cpp/**: Main C++ workflow; contains `libDaisy`, `DaisySP`, and `stmlib` submodules, Spark BSP (`daisy_spark.h/.cpp`), `helper.py`, `ci/`, and projects like `spark-init/`
+  - **spark/ino/**, **spark/max/**, **spark/pd/**, **spark/rs/**: Additional Spark runtime ecosystems (Arduino, Max, Pure Data, Rust)
 - **arcs/**: I2C and SPI digital Expansion modules to provide additional controls and features for Spark, Nexus, and other microcontroller-based modules
 - **.github/**: Copilot instructions, funding, and community files
 
@@ -39,13 +41,22 @@
 - **clectric.diy**: Lowercase, always with the dot; refers to the community and online makerspace
 - **FLUX**: All caps for the firmware platform/brand
 - **Nexus, Spark, Arc, Shock**: Capitalized for module names
-- **Directory names**: Lowercase for URLs and file paths (e.g., `nexus/lunetta/`)
+- **Directory names**: Lowercase for URLs and file paths (e.g., `nexus/ino/lunetta/`)
 
 ### 5. Development Guidelines
 - **Modular Design**: Shared code in core libraries, variant-specific in subfolders
 - **Documentation**: Focus on creative/functional descriptions, not just technical details
 - **Testing**: Each module/variant should compile and run independently
 - **Hardware Compatibility**: AE Modular standard (0-5V), Daisy Seed, ATmega4809-A, I2C/SPI expansion for Arc modules
+- **Post-refactor path convention**: Spark library/tooling paths now live under `spark/cpp/` (not repo root). Prefer script-relative path resolution in tooling and CI.
+- **Nexus runtime convention**: Arduino projects live under `nexus/ino/`; keep shared implementation in `nexus/ino/core/` and variants in sibling folders.
+
+### 6. Post-Refactor Guardrails (Current State)
+- **Do not reintroduce old root paths**: `libDaisy/`, `DaisySP/`, `stmlib/`, `helper.py`, and `ci/` are under `spark/cpp/`.
+- **Spark build/tooling references** should target `spark/cpp/...` and remain script-relative where possible.
+- **Nexus shared includes** in variants should use `../core/nexus-core.h` from `nexus/ino/{router,lunetta,sequencer}/`.
+- **Runtime discoverability matters**: prefer explicit runtime folders like `nexus/ino/` and `spark/{cpp,ino,max,pd,rs}/` for beginner clarity.
+- **Brand/module style**: use `Nexus` (not all-caps) in user-facing docs.
 
 ## Quick References
 - [clectric.diy](https://clectric.diy) — Main site, project overviews, and resources
@@ -59,13 +70,27 @@
 ## Example Directory Structure
 ```
 FLUX/
-├── nexus/          # Arduino-based AE Modular switch matrix
-│   ├── router/     # Pure signal routing
-│   ├── lunetta/    # Generative chaos engine
-│   └── sequencer/  # Step pattern sequencer
-├── spark/          # Daisy Seed-based module(s)
-│   └── SparkInit/  # SynthVoice-based firmware, expanding to effects/looper
-└── arcs/            # Expansion modules (fader, display, etc.) for Spark/Nexus
+├── nexus/               # Arduino-based AE Modular switch matrix
+│   └── ino/             # Arduino runtime projects
+│       ├── core/        # Shared hardware + matrix implementation
+│       ├── router/      # Pure signal routing
+│       ├── lunetta/     # Generative chaos engine
+│       └── sequencer/   # Step pattern sequencer
+├── spark/               # Daisy Seed-based module(s)
+│   └── cpp/             # C++ firmware and build dependencies
+│       ├── libDaisy/    # Daisy Seed HAL (git submodule)
+│       ├── DaisySP/     # Daisy DSP library (git submodule)
+│       ├── stmlib/      # STM32 utilities (git submodule)
+│       ├── daisy_spark.h    # Spark Board Support Package (BSP) header
+│       ├── daisy_spark.cpp  # Spark BSP implementation
+│       ├── helper.py    # Project management utility (create/copy/update projects)
+│       ├── ci/          # CI scripts (build_libs.sh)
+│       └── spark-init/  # SynthVoice-based firmware, expanding to effects/looper
+│   ├── ino/             # Arduino runtime projects
+│   ├── max/             # Max/MSP runtime projects
+│   ├── pd/              # Pure Data runtime projects
+│   └── rs/              # Rust runtime projects
+└── arcs/                # Expansion modules (fader, display, etc.) for Spark/Nexus
 ```
 
 ## Project Philosophy
