@@ -9,9 +9,32 @@ void nexusDebugPrintf(const char* format, ...) {
   Serial.print(buffer);
 }
 
-Adafruit_SSD1306 display(OLED_WIDTH, OLED_HEIGHT, &Wire, OLED_RESET);
+U8G2_SH1106_128X64_NONAME_F_HW_I2C display(U8G2_R0, U8X8_PIN_NONE);
 
 namespace {
+
+byte detectedOledAddress = OLED_ADDR;
+
+bool i2cDevicePresent(byte address) {
+  Wire.beginTransmission(address);
+  return (Wire.endTransmission() == 0);
+}
+
+byte detectOledAddress() {
+  if (i2cDevicePresent(0x3C)) {
+    return 0x3C;
+  }
+  if (i2cDevicePresent(0x3D)) {
+    return 0x3D;
+  }
+  return OLED_ADDR;
+}
+
+enum FillMode : uint8_t {
+  FILL_25,
+  FILL_75,
+  FILL_100,
+};
 
 void printFormattedToDisplay(const char* format, ...) {
   char buffer[32];
@@ -20,6 +43,39 @@ void printFormattedToDisplay(const char* format, ...) {
   vsnprintf(buffer, sizeof(buffer), format, args);
   va_end(args);
   display.print(buffer);
+}
+
+int16_t oledX(int16_t x) {
+  return x + OLED_PIXEL_OFFSET_X;
+}
+
+int16_t oledY(int16_t y) {
+  return y + OLED_PIXEL_OFFSET_Y;
+}
+
+void drawStippleRect(int16_t x, int16_t y, int16_t w, int16_t h, FillMode mode) {
+  if (mode == FILL_100) {
+    display.drawBox(x, y, w, h);
+    return;
+  }
+
+  for (int16_t py = 0; py < h; py++) {
+    for (int16_t px = 0; px < w; px++) {
+      int16_t gx = x + px;
+      int16_t gy = y + py;
+      bool on = false;
+
+      if (mode == FILL_25) {
+        on = ((gx & 1) == 0) && ((gy & 1) == 0);  // 1/4 pixels on
+      } else if (mode == FILL_75) {
+        on = !(((gx & 1) == 1) && ((gy & 1) == 1)); // 3/4 pixels on
+      }
+
+      if (on) {
+        display.drawPixel(gx, gy);
+      }
+    }
+  }
 }
 
 } // namespace
@@ -125,13 +181,11 @@ void checkEncoderButtons() {
     unsigned long pressDuration = now - encoder1PressTime;
 
     if (pressDuration < 500 && uiMode == ROUTING_MODE) {
-      activeState.toggleEntry(auditingY, auditingX);
+      activeState.toggleEntry(cursorY, cursorX);
       flagSaveNeeded = true;
       flagDisplayUpdate = true;
-      DEBUG_PRINTF("[BTN1] Toggle X:%d Y:%d\n", auditingX, auditingY);
+      DEBUG_PRINTF("[BTN1] Toggle X:%d Y:%d\n", cursorX, cursorY);
       writePatchMatrixToADG2188();
-    } else if (pressDuration >= 500) {
-      DEBUG_PRINTLN(F("[BTN1] Long press"));
     }
   }
 
@@ -154,44 +208,6 @@ void checkEncoderButtons() {
   }
 }
 
-void processEncoderInput() {
-  if (encoder1Delta != 0) {
-    DEBUG_PRINTF("[ENC1] Delta: %d\n", encoder1Delta);
-
-    if (uiMode == ROUTING_MODE) {
-      int newY = constrain((int) cursorY + encoder1Delta, 0, MATRIX_SIZE - 1);
-      if (newY != cursorY) {
-        cursorY = newY;
-        startAuditioning(cursorX, cursorY);
-        flagDisplayUpdate = true;
-      }
-    } else {
-      routerHandleMenuEncoder1(encoder1Delta);
-    }
-
-    encoder1Delta = 0;
-  }
-
-  if (encoder2Delta != 0) {
-    DEBUG_PRINTF("[ENC2] Delta: %d\n", encoder2Delta);
-
-    if (uiMode == ROUTING_MODE) {
-      int newX = constrain((int) cursorX + encoder2Delta, 0, MATRIX_SIZE - 1);
-      if (newX != cursorX) {
-        cursorX = newX;
-        startAuditioning(cursorX, cursorY);
-        flagDisplayUpdate = true;
-      }
-    } else {
-      routerHandleMenuEncoder2(encoder2Delta);
-    }
-
-    encoder2Delta = 0;
-  }
-
-  checkEncoderButtons();
-}
-
 void isr_encoder1Tick() {
   if (digitalRead(ENCODER1_A) != digitalRead(ENCODER1_B)) {
     encoder1Delta++;
@@ -208,21 +224,62 @@ void isr_encoder2Tick() {
   }
 }
 
-void initializeDisplay(const __FlashStringHelper* title) {
-  if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
-    DEBUG_PRINTLN(F("[ERROR] SSD1309 OLED failed to initialize (SSD1306-compatible mode)!"));
-    return;
+void processEncoderInput() {
+  if (encoder1Delta != 0) {
+    DEBUG_PRINTF("[ENC1] Delta: %d\n", encoder1Delta);
+
+    if (uiMode == ROUTING_MODE) {
+      int newX = constrain((int) cursorX + encoder1Delta, 0, MATRIX_SIZE - 1);
+      if (newX != cursorX) {
+        cursorX = newX;
+        DEBUG_PRINTF("[CURSOR] X=%d Y=%d\n", cursorX, cursorY);
+        startAuditioning(cursorX, cursorY);
+        flagDisplayUpdate = true;
+      }
+    } else {
+      routerHandleMenuEncoder1(encoder1Delta);
+    }
+
+    encoder1Delta = 0;
   }
 
-  DEBUG_PRINTLN(F("[SETUP] SSD1309 OLED initialized (SSD1306-compatible mode)"));
-  display.setRotation(0);
-  display.setTextSize(1);
-  display.setTextColor(SSD1306_WHITE);
-  display.clearDisplay();
-  display.setCursor(0, 0);
+  if (encoder2Delta != 0) {
+    DEBUG_PRINTF("[ENC2] Delta: %d\n", encoder2Delta);
+
+    if (uiMode == ROUTING_MODE) {
+      int newY = constrain((int) cursorY + encoder2Delta, 0, MATRIX_SIZE - 1);
+      if (newY != cursorY) {
+        cursorY = newY;
+        DEBUG_PRINTF("[CURSOR] X=%d Y=%d\n", cursorX, cursorY);
+        startAuditioning(cursorX, cursorY);
+        flagDisplayUpdate = true;
+      }
+    } else {
+      routerHandleMenuEncoder2(encoder2Delta);
+    }
+
+    encoder2Delta = 0;
+  }
+
+  checkEncoderButtons();
+}
+
+void initializeDisplay(const __FlashStringHelper* title) {
+  detectedOledAddress = detectOledAddress();
+  display.setI2CAddress(detectedOledAddress << 1);
+  display.begin();
+
+  DEBUG_PRINTF("[SETUP] OLED initialized (1.3in SH1106 profile), addr=0x%02X\n", detectedOledAddress);
+  display.setFont(u8g2_font_5x8_tr);
+  display.clearBuffer();
+  display.sendBuffer();
+  delay(20);
+
+  display.clearBuffer();
+  display.setCursor(oledX(0), oledY(0));
   display.println(title);
   display.println(F("Initializing..."));
-  display.display();
+  display.sendBuffer();
 }
 
 } // namespace
@@ -347,7 +404,7 @@ void loadPresetFromEEPROM(byte presetIndex) {
 }
 
 void updateDisplay() {
-  display.clearDisplay();
+  display.clearBuffer();
 
   if (uiMode == ROUTING_MODE) {
     renderRoutingMode();
@@ -355,7 +412,7 @@ void updateDisplay() {
     renderMenuMode();
   }
 
-  display.display();
+  display.sendBuffer();
 }
 
 void renderRoutingMode() {
@@ -366,45 +423,44 @@ void renderRoutingMode() {
   }
 
   uint16_t statusX = GRID_START_X + GRID_PIXEL_SIZE + 3;
-  display.setTextSize(1);
-  display.setTextColor(SSD1306_WHITE);
-  display.setCursor(statusX, 0);
+  display.setFont(u8g2_font_5x8_tr);
+  display.setCursor(oledX(statusX), oledY(0));
 
   char label[8];
   snprintf(label, sizeof(label), "%c:%d", 'A' + cursorX, cursorY + 1);
   display.println(label);
 
-  display.setCursor(statusX, 10);
+  display.setCursor(oledX(statusX), oledY(10));
   printFormattedToDisplay("P:%d", currentPresetIndex);
 }
 
 void renderMatrixBox(byte x, byte y) {
-  uint16_t boxX = GRID_START_X + (x * (BOX_SIZE + BOX_SPACING));
-  uint16_t boxY = GRID_START_Y + (y * (BOX_SIZE + BOX_SPACING));
+  uint16_t boxX = oledX(GRID_START_X + (x * (BOX_SIZE + BOX_SPACING)));
+  uint16_t boxY = oledY(GRID_START_Y + (y * (BOX_SIZE + BOX_SPACING)));
 
-  bool isActive = activeState.getEntry(y, x);
-  bool isAudit = isAuditioning && (auditingX == x) && (auditingY == y);
+  const bool isSelected = activeState.getEntry(y, x);
+  const bool isCursorCell = (cursorX == x) && (cursorY == y);
 
-  if (isActive) {
-    display.fillRect(boxX, boxY, BOX_SIZE, BOX_SIZE, SSD1306_WHITE);
-  } else if (isAudit) {
-    for (int py = 0; py < BOX_SIZE - 2; py++) {
-      for (int px = 0; px < BOX_SIZE - 2; px++) {
-        if ((px + py) % 2 == 0) {
-          display.drawPixel(boxX + 1 + px, boxY + 1 + py, SSD1306_WHITE);
-        }
-      }
-    }
-    display.drawRect(boxX, boxY, BOX_SIZE, BOX_SIZE, SSD1306_WHITE);
-  } else {
-    display.drawRect(boxX, boxY, BOX_SIZE, BOX_SIZE, SSD1306_WHITE);
+  // Visual spec:
+  // - unselected: 25% stipple
+  // - selected: 100% fill
+  // - audition/cursor cell: 75% stipple + open outline
+  FillMode mode = isSelected ? FILL_100 : FILL_25;
+  if (isCursorCell) {
+    mode = FILL_75;
+  }
+
+  drawStippleRect(boxX, boxY, BOX_SIZE, BOX_SIZE, mode);
+
+  if (isCursorCell) {
+    // Open square outline around the 6x6 cell
+    display.drawFrame(boxX - 1, boxY - 1, BOX_SIZE + 2, BOX_SIZE + 2);
   }
 }
 
 void renderMenuMode() {
-  display.setTextSize(1);
-  display.setTextColor(SSD1306_WHITE);
-  display.setCursor(0, 0);
+  display.setFont(u8g2_font_5x8_tr);
+  display.setCursor(oledX(0), oledY(0));
   display.println(F("=== MENU MODE ==="));
   display.println(F("Turn encoder to switch presets"));
   printFormattedToDisplay("Current: %d\n", currentPresetIndex);
@@ -438,11 +494,17 @@ void nexus_setup() {
     }
     DEBUG_PRINTLN(F("\n=== NEXUS ROUTER STARTING ==="));
     DEBUG_PRINTLN(F("VARIANT: Base Router"));
+  #if defined(ARDUINO_AVR_NANO_EVERY)
+    DEBUG_PRINTLN(F("BOARD: Arduino Nano Every (ATmega4809)"));
+  #else
+    DEBUG_PRINTLN(F("BOARD: Not Nano Every macro"));
+  #endif
+    DEBUG_PRINTLN(F("ENC MAP: E2(A=4,B=5,SW=6) E1(A=7,B=10,SW=11)"));
   }
 
   Wire.begin();
-  Wire.setClock(400000);
-  DEBUG_PRINTLN(F("[SETUP] I2C bus initialized @ 400 kHz"));
+  Wire.setClock(100000);
+  DEBUG_PRINTLN(F("[SETUP] I2C bus initialized @ 100 kHz"));
 
   initializeDisplay(F("NEXUS ROUTER"));
 
@@ -456,10 +518,14 @@ void nexus_setup() {
 
   attachInterrupt(digitalPinToInterrupt(ENCODER1_A), isr_encoder1Tick, CHANGE);
   attachInterrupt(digitalPinToInterrupt(ENCODER2_A), isr_encoder2Tick, CHANGE);
+
   DEBUG_PRINTLN(F("[SETUP] Encoder interrupts attached"));
 
   initializeADG2188();
-  loadPresetFromEEPROM(0);
+  activeState.clear();
+  currentPresetIndex = 0;
+  writePatchMatrixToADG2188();
+  DEBUG_PRINTLN(F("[SETUP] Matrix defaulted to blank (all unselected)"));
 
   flagDisplayUpdate = true;
   DEBUG_PRINTLN(F("[SETUP] Initialization complete\n"));
@@ -495,5 +561,5 @@ void nexus_loop() {
     updateDisplay();
   }
 
-  delay(10);
+  delay(1);
 }

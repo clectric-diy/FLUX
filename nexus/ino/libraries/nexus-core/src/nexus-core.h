@@ -16,7 +16,7 @@
 
 #include <Arduino.h>
 #include <Wire.h>
-#include <Adafruit_SSD1306.h>
+#include <U8g2lib.h>
 #include <EEPROM.h>
 #include <stdarg.h>
 
@@ -49,13 +49,13 @@ void nexusDebugPrintf(const char* format, ...);
   #warning "Nexus prototype firmware is currently mapped for Arduino Nano Every"
 #endif
 
-#define ENCODER2_A     4
-#define ENCODER2_B     5
-#define ENCODER2_BTN   6
+#define ENCODER2_A     14   // Physical pin 4  = A0/D14
+#define ENCODER2_B     15   // Physical pin 5  = A1/D15
+#define ENCODER2_BTN   16   // Physical pin 6  = A2/D16
 
-#define ENCODER1_A     7
-#define ENCODER1_B     10
-#define ENCODER1_BTN   11
+#define ENCODER1_A     17   // Physical pin 7  = A3/D17
+#define ENCODER1_B     20   // Physical pin 10 = A6/D20 (skips SDA/SCL at 8,9)
+#define ENCODER1_BTN   21   // Physical pin 11 = A7/D21
 
 // ============================================================================
 // I2C DEVICE ADDRESSES
@@ -68,6 +68,13 @@ void nexusDebugPrintf(const char* format, ...);
 #define OLED_WIDTH  128
 #define OLED_HEIGHT 64
 
+// 1.3" SH1106-class 128x64 modules commonly need a +2 X pixel shift when driven
+// through SSD1306-compatible libraries.
+// Tune these if content appears misaligned.
+#define OLED_PIXEL_OFFSET_X       2
+#define OLED_PIXEL_OFFSET_Y       0
+#define OLED_CONTROLLER_OFFSET_Y  0
+
 // ============================================================================
 // CONSTANTS
 // ============================================================================
@@ -78,7 +85,7 @@ void nexusDebugPrintf(const char* format, ...);
 #define EEPROM_SAVE_DELAY   1000
 
 #define BOX_SIZE       6
-#define BOX_SPACING    1
+#define BOX_SPACING    2
 #define GRID_PIXEL_SIZE ((MATRIX_SIZE * BOX_SIZE) + ((MATRIX_SIZE - 1) * BOX_SPACING))
 #define GRID_START_X   ((OLED_WIDTH - GRID_PIXEL_SIZE) / 2)
 #define GRID_START_Y   ((OLED_HEIGHT - GRID_PIXEL_SIZE) / 2)
@@ -142,7 +149,7 @@ public:
 // ============================================================================
 // GLOBAL VARIABLES - DECLARED HERE, DEFINED IN nexus-core.cpp
 // ============================================================================
-extern Adafruit_SSD1306 display;
+extern U8G2_SH1106_128X64_NONAME_F_HW_I2C display;
 extern PresetState activeState;
 extern PresetState presets[NUM_PRESETS];
 extern byte currentPresetIndex;
