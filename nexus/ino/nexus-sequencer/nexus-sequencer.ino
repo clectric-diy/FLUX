@@ -27,12 +27,12 @@
   - Clock input advances sequencer automatically
   
   SHARED CODE:
-  All I2C, EEPROM, display, and preset functions are in ../core/nexus-core.cpp/.h
+  All I2C, EEPROM, display, and preset functions are in ../nexus-core/nexus-core.cpp/.h
   This file extends the router with step sequencer logic.
   ============================================================================
 */
 
-#include "../core/nexus-core.h"
+#include "../nexus-core/nexus-core.h"
 
 // ============================================================================
 // STEP SEQUENCER DEFINITIONS

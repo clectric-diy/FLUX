@@ -25,12 +25,12 @@
   - OLED shows current matrix state and menu options
   
   SHARED CODE:
-  All I2C, EEPROM, display, and preset functions are in ../core/nexus-core.cpp/.h
+  All I2C, EEPROM, display, and preset functions are in ../nexus-core/nexus-core.cpp/.h
   This file implements the base router interface.
   ============================================================================
 */
 
-#include "../core/nexus-core.h"
+#include "../nexus-core/nexus-core.h"
 
 // ============================================================================
 // ROUTER-SPECIFIC DEFINITIONS
