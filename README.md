@@ -6,6 +6,11 @@ Each FLUX is a self-contained firmware project with:
 - A unique behavior or purpose
 - Documentation, controls, and patch examples
 
+## Modules
+
+- **Nexus** — Arduino-based firmware for the 8×8 analog switch matrix; start in `nexus/README.md`
+- **Spark** — Daisy Seed-based firmware and supporting runtimes; start in `spark/README.md`
+
 ## FLUX Header Comment
 Including a good header comment such as the following example will help everyone to understand your FLUX.
 
