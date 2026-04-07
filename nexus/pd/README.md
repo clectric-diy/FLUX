@@ -10,10 +10,6 @@ The goal is to create a software-first playground for the Nexus 8×8 routing wor
 - Validate UI and interaction concepts before coding on embedded targets.
 - Explore generative and sequenced matrix behavior in a visual patching environment.
 - Build learning examples for the clectric.diy community.
-
-## Notes
-
-- Keep naming and behavior aligned with the Nexus firmware concepts in [nexus-core/nexus-core.h](../ino/nexus-core).
 - Treat these patches as reference models and creative prototyping tools.
 
 ## References
