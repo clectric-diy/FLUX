@@ -16,7 +16,7 @@
   - EEPROM storage for presets
   - I2C communication for matrix control
   
-  Hardware: ATmega4809-A (TQFP-48) @ 5V logic
+  Hardware: Arduino Nano Every prototype (ATmega4809) @ 5V logic
   Ecosystem: AE Modular standard (0-5V signals)
   
   INTERACTION:

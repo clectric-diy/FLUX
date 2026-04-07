@@ -18,7 +18,7 @@
   - Swing/shuffle timing adjustment
   - Pattern storage/recall with EEPROM
   
-  Hardware: ATmega4809-A (TQFP-48) @ 5V logic
+  Hardware: Arduino Nano Every prototype (ATmega4809) @ 5V logic
   Ecosystem: AE Modular standard (0-5V signals)
   
   INTERACTION:
@@ -389,12 +389,12 @@ void setup() {
   Wire.setClock(400000);
   DEBUG_PRINTLN(F("[SETUP] I2C bus initialized @ 400 kHz"));
   
-  // Initialize OLED display
+  // Initialize OLED display (SSD1309 module via SSD1306-compatible commands)
   if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
-    DEBUG_PRINTLN(F("[ERROR] SSD1306 OLED failed to initialize!"));
+    DEBUG_PRINTLN(F("[ERROR] SSD1309 OLED failed to initialize (SSD1306-compatible mode)!"));
   } else {
-    DEBUG_PRINTLN(F("[SETUP] SSD1306 OLED initialized"));
-    display.setRotation(1);
+    DEBUG_PRINTLN(F("[SETUP] SSD1309 OLED initialized (SSD1306-compatible mode)"));
+    display.setRotation(0);
     display.setTextSize(1);
     display.setTextColor(SSD1306_WHITE);
     display.clearDisplay();

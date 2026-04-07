@@ -179,23 +179,24 @@ void updateDisplay() {
 }
 
 void renderRoutingMode() {
-  // Render 8x8 grid on left side (64x64 pixels)
+  // Render centered 8x8 grid
   for (int y = 0; y < MATRIX_SIZE; y++) {
     for (int x = 0; x < MATRIX_SIZE; x++) {
       renderMatrixBox(x, y);
     }
   }
   
-  // Render status text on right side
+  // Render status text in the right margin
+  uint16_t statusX = GRID_START_X + GRID_PIXEL_SIZE + 3;
   display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
-  display.setCursor(70, 0);
+  display.setCursor(statusX, 0);
   
   char label[8];
   sprintf(label, "%c:%d", 'A' + cursorX, cursorY + 1);
   display.println(label);
   
-  display.setCursor(70, 10);
+  display.setCursor(statusX, 10);
   display.printf("P:%d", currentPresetIndex);
 }
 

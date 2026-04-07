@@ -35,18 +35,20 @@
 // ============================================================================
 // PIN DEFINITIONS
 // ============================================================================
-// ATmega4809-A pinout reference (TQFP-48):
-// I2C: SDA = PA2 (pin 23), SCL = PA3 (pin 24) - hardware I2C
+// Prototype target board: Arduino Nano Every (ATmega4809, 5V logic)
+// I2C uses the board's dedicated SDA/SCL pins.
 
-#define ENCODER1_A     5    // Encoder 1 A pin (interrupt)
-#define ENCODER1_B     6    // Encoder 1 B pin (interrupt)
-#define ENCODER1_BTN   7    // Encoder 1 push button
+#if !defined(ARDUINO_AVR_NANO_EVERY)
+  #warning "Nexus prototype firmware is currently mapped for Arduino Nano Every"
+#endif
 
-#define ENCODER2_A     8    // Encoder 2 A pin (interrupt)
-#define ENCODER2_B     9    // Encoder 2 B pin (interrupt)
-#define ENCODER2_BTN   10   // Encoder 2 push button
+#define ENCODER1_A     4    // Encoder 1 A pin (interrupt)
+#define ENCODER1_B     5    // Encoder 1 B pin (interrupt)
+#define ENCODER1_BTN   6    // Encoder 1 push button
 
-#define OLED_RESET     4    // OLED reset (if needed)
+#define ENCODER2_A     7    // Encoder 2 A pin (interrupt)
+#define ENCODER2_B     10    // Encoder 2 B pin (interrupt)
+#define ENCODER2_BTN   11   // Encoder 2 push button
 
 // ============================================================================
 // I2C DEVICE ADDRESSES
@@ -55,7 +57,7 @@
 #define ADG2188_INPUT_MUX2_ADDR   0x49  // Second input mux
 #define ADG2188_MAIN_ROUTER_ADDR  0x4A  // Main routing matrix
 
-#define OLED_ADDR   0x3C  // SSD1306 default address
+#define OLED_ADDR   0x3C  // SSD1309 I2C module address (SSD1306-compatible init path)
 #define OLED_WIDTH  128
 #define OLED_HEIGHT 64
 
@@ -68,11 +70,12 @@
 #define AUDITION_TIMEOUT_MS 3000        // 3-second audition timeout
 #define EEPROM_SAVE_DELAY   1000        // Opportunistic save delay
 
-// Display grid
-#define GRID_START_X   8
-#define GRID_START_Y   4
+// Display grid (centered on 128x64 landscape layout)
 #define BOX_SIZE       6
 #define BOX_SPACING    1
+#define GRID_PIXEL_SIZE ((MATRIX_SIZE * BOX_SIZE) + ((MATRIX_SIZE - 1) * BOX_SPACING))
+#define GRID_START_X   ((OLED_WIDTH - GRID_PIXEL_SIZE) / 2)
+#define GRID_START_Y   ((OLED_HEIGHT - GRID_PIXEL_SIZE) / 2)
 
 // ============================================================================
 // ENUM: UI STATE MACHINE
