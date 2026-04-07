@@ -84,6 +84,11 @@ void nexusDebugPrintf(const char* format, ...);
 #define AUDITION_TIMEOUT_MS 3000
 #define EEPROM_SAVE_DELAY   1000
 
+// Magic byte stored after the preset region to detect first boot vs uninitialised EEPROM
+#define EEPROM_PRESET_STRIDE  (MATRIX_BYTES + 4)          // 12 bytes per preset slot
+#define EEPROM_MAGIC_ADDR     (NUM_PRESETS * EEPROM_PRESET_STRIDE)  // byte 96
+#define EEPROM_MAGIC_VAL      0xAB
+
 #define BOX_SIZE       6
 #define BOX_SPACING    2
 #define GRID_PIXEL_SIZE ((MATRIX_SIZE * BOX_SIZE) + ((MATRIX_SIZE - 1) * BOX_SPACING))

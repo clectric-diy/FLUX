@@ -45,6 +45,10 @@ void printFormattedToDisplay(const char* format, ...) {
   display.print(buffer);
 }
 
+void formatCursorPosition(char* out, size_t outLen, byte x, byte y) {
+  snprintf(out, outLen, "%c:%d", 'A' + x, y + 1);
+}
+
 int16_t oledX(int16_t x) {
   return x + OLED_PIXEL_OFFSET_X;
 }
@@ -102,6 +106,32 @@ unsigned long lastEEPROMSaveTime = 0;
 
 namespace {
 
+constexpr unsigned long BUTTON_DEBOUNCE_MS = 12;
+constexpr unsigned long BUTTON_LONG_PRESS_MS = 3000;
+
+struct DebouncedButton {
+  uint8_t pin;
+  const char* name;
+  bool rawState;
+  bool stableState;
+  unsigned long lastRawChangeMs;
+  unsigned long pressStartMs;
+  bool longHandled;
+
+  void begin(uint8_t buttonPin, const char* buttonName) {
+    pin = buttonPin;
+    name = buttonName;
+    rawState = digitalRead(pin);
+    stableState = rawState;
+    lastRawChangeMs = millis();
+    pressStartMs = 0;
+    longHandled = false;
+  }
+};
+
+DebouncedButton encoder1Button;
+DebouncedButton encoder2Button;
+
 void routerHandleMenuEncoder1(int8_t delta) {
   if (delta > 0) {
     nextPreset();
@@ -125,7 +155,9 @@ void startAuditioning(byte x, byte y) {
     writeAuditToADG2188(x, y);
   }
 
-  DEBUG_PRINTF("[AUDITION] Started at X:%d Y:%d (Active:%d)\n", x, y, isEntryActive);
+  char pos[8];
+  formatCursorPosition(pos, sizeof(pos), x, y);
+  DEBUG_PRINTF("[AUDITION] %s (Active:%d)\n", pos, isEntryActive);
   flagDisplayUpdate = true;
 }
 
@@ -137,6 +169,107 @@ void stopAuditioning() {
 
   DEBUG_PRINTLN(F("[AUDITION] Stopped - patchMatrix restored"));
   flagDisplayUpdate = true;
+}
+
+void logSelectionState(byte x, byte y) {
+  char pos[8];
+  formatCursorPosition(pos, sizeof(pos), x, y);
+  bool state = activeState.getEntry(y, x);
+  DEBUG_PRINTF("[SELECT] %s = %d (Row %d: 0x%02X)\n", pos, state, y, activeState.patchMatrix[y]);
+}
+
+void traceEncoderPins() {
+  static bool initialized = false;
+  static uint8_t lastE2A = HIGH;
+  static uint8_t lastE2B = HIGH;
+  static uint8_t lastE2Btn = HIGH;
+  static uint8_t lastE1A = HIGH;
+  static uint8_t lastE1B = HIGH;
+  static uint8_t lastE1Btn = HIGH;
+
+  uint8_t e2a = digitalRead(ENCODER2_A);
+  uint8_t e2b = digitalRead(ENCODER2_B);
+  uint8_t e2btn = digitalRead(ENCODER2_BTN);
+  uint8_t e1a = digitalRead(ENCODER1_A);
+  uint8_t e1b = digitalRead(ENCODER1_B);
+  uint8_t e1btn = digitalRead(ENCODER1_BTN);
+
+  if (!initialized) {
+    initialized = true;
+    lastE2A = e2a;
+    lastE2B = e2b;
+    lastE2Btn = e2btn;
+    lastE1A = e1a;
+    lastE1B = e1b;
+    lastE1Btn = e1btn;
+    return;
+  }
+
+  if (e2a != lastE2A || e2b != lastE2B || e2btn != lastE2Btn || e1a != lastE1A || e1b != lastE1B || e1btn != lastE1Btn) {
+    DEBUG_PRINTF("[PINS] E2(A:%d B:%d SW:%d) E1(A:%d B:%d SW:%d)\n", e2a, e2b, e2btn, e1a, e1b, e1btn);
+    lastE2A = e2a;
+    lastE2B = e2b;
+    lastE2Btn = e2btn;
+    lastE1A = e1a;
+    lastE1B = e1b;
+    lastE1Btn = e1btn;
+  }
+}
+
+void handleEncoder2ShortPress() {
+  if (uiMode != ROUTING_MODE) {
+    return;
+  }
+
+  activeState.toggleEntry(cursorY, cursorX);
+  flagSaveNeeded = true;
+  flagDisplayUpdate = true;
+  logSelectionState(cursorX, cursorY);
+  writePatchMatrixToADG2188();
+}
+
+void updateButton(DebouncedButton& button, unsigned long now) {
+  bool reading = digitalRead(button.pin);
+
+  if (reading != button.rawState) {
+    button.rawState = reading;
+    button.lastRawChangeMs = now;
+    DEBUG_PRINTF("[%s RAW] %d\n", button.name, reading);
+  }
+
+  if ((now - button.lastRawChangeMs) < BUTTON_DEBOUNCE_MS) {
+    return;
+  }
+
+  if (button.stableState != button.rawState) {
+    button.stableState = button.rawState;
+
+    if (button.stableState == LOW) {
+      button.pressStartMs = now;
+      button.longHandled = false;
+      DEBUG_PRINTF("[%s] Pressed\n", button.name);
+    } else {
+      unsigned long pressDuration = now - button.pressStartMs;
+      DEBUG_PRINTF("[%s] Released after %lu ms\n", button.name, pressDuration);
+
+      if (!button.longHandled) {
+        DEBUG_PRINTF("[%s] Click\n", button.name);
+      }
+
+      if (&button == &encoder2Button && !button.longHandled) {
+        handleEncoder2ShortPress();
+      }
+    }
+  }
+
+  if (button.stableState == LOW && !button.longHandled && (now - button.pressStartMs) >= BUTTON_LONG_PRESS_MS) {
+    button.longHandled = true;
+
+    if (&button == &encoder2Button) {
+      flagModeChange = true;
+      DEBUG_PRINTLN(F("[BTN2] Long press (3s) - mode change"));
+    }
+  }
 }
 
 void updateMatrixAuditioning() {
@@ -168,44 +301,8 @@ void handleModeChange() {
 void checkEncoderButtons() {
   unsigned long now = millis();
 
-  static bool encoder1Down = false;
-  static unsigned long encoder1PressTime = 0;
-
-  bool encoder1State = digitalRead(ENCODER1_BTN);
-  if (!encoder1State && !encoder1Down) {
-    encoder1Down = true;
-    encoder1PressTime = now;
-    DEBUG_PRINTLN(F("[BTN1] Pressed"));
-  } else if (encoder1State && encoder1Down) {
-    encoder1Down = false;
-    unsigned long pressDuration = now - encoder1PressTime;
-
-    if (pressDuration < 500 && uiMode == ROUTING_MODE) {
-      activeState.toggleEntry(cursorY, cursorX);
-      flagSaveNeeded = true;
-      flagDisplayUpdate = true;
-      DEBUG_PRINTF("[BTN1] Toggle X:%d Y:%d\n", cursorX, cursorY);
-      writePatchMatrixToADG2188();
-    }
-  }
-
-  static bool encoder2Down = false;
-  static unsigned long encoder2PressTime = 0;
-
-  bool encoder2State = digitalRead(ENCODER2_BTN);
-  if (!encoder2State && !encoder2Down) {
-    encoder2Down = true;
-    encoder2PressTime = now;
-    DEBUG_PRINTLN(F("[BTN2] Pressed"));
-  } else if (encoder2State && encoder2Down) {
-    encoder2Down = false;
-    unsigned long pressDuration = now - encoder2PressTime;
-
-    if (pressDuration >= 3000) {
-      flagModeChange = true;
-      DEBUG_PRINTLN(F("[BTN2] Long press (3s) - mode change"));
-    }
-  }
+  updateButton(encoder1Button, now);
+  updateButton(encoder2Button, now);
 }
 
 void isr_encoder1Tick() {
@@ -225,14 +322,13 @@ void isr_encoder2Tick() {
 }
 
 void processEncoderInput() {
-  if (encoder1Delta != 0) {
-    DEBUG_PRINTF("[ENC1] Delta: %d\n", encoder1Delta);
+  traceEncoderPins();
 
+  if (encoder1Delta != 0) {
     if (uiMode == ROUTING_MODE) {
       int newX = constrain((int) cursorX + encoder1Delta, 0, MATRIX_SIZE - 1);
       if (newX != cursorX) {
         cursorX = newX;
-        DEBUG_PRINTF("[CURSOR] X=%d Y=%d\n", cursorX, cursorY);
         startAuditioning(cursorX, cursorY);
         flagDisplayUpdate = true;
       }
@@ -244,13 +340,10 @@ void processEncoderInput() {
   }
 
   if (encoder2Delta != 0) {
-    DEBUG_PRINTF("[ENC2] Delta: %d\n", encoder2Delta);
-
     if (uiMode == ROUTING_MODE) {
       int newY = constrain((int) cursorY + encoder2Delta, 0, MATRIX_SIZE - 1);
       if (newY != cursorY) {
         cursorY = newY;
-        DEBUG_PRINTF("[CURSOR] X=%d Y=%d\n", cursorX, cursorY);
         startAuditioning(cursorX, cursorY);
         flagDisplayUpdate = true;
       }
@@ -304,23 +397,23 @@ void saveActiveToPreset(byte idx) {
 }
 
 void nextPreset() {
-  currentPresetIndex = (currentPresetIndex + 1) % NUM_PRESETS;
-  loadActiveFromPreset(currentPresetIndex);
-  saveActiveToPreset(currentPresetIndex);
   savePresetToEEPROM(currentPresetIndex);
+  currentPresetIndex = (currentPresetIndex + 1) % NUM_PRESETS;
+  loadPresetFromEEPROM(currentPresetIndex);
   DEBUG_PRINTF("[PRESET] Next -> %d\n", currentPresetIndex);
   flagDisplayUpdate = true;
 }
 
 void prevPreset() {
+  savePresetToEEPROM(currentPresetIndex);
+
   if (currentPresetIndex == 0) {
     currentPresetIndex = NUM_PRESETS - 1;
   } else {
     currentPresetIndex--;
   }
-  loadActiveFromPreset(currentPresetIndex);
-  saveActiveToPreset(currentPresetIndex);
-  savePresetToEEPROM(currentPresetIndex);
+
+  loadPresetFromEEPROM(currentPresetIndex);
   DEBUG_PRINTF("[PRESET] Prev -> %d\n", currentPresetIndex);
   flagDisplayUpdate = true;
 }
@@ -353,8 +446,6 @@ void writeAuditToADG2188(byte col, byte row) {
 
   byte auditRow = activeState.patchMatrix[row] | (1 << col);
   writeToADG2188Row(ADG2188_MAIN_ROUTER_ADDR, row, auditRow);
-
-  DEBUG_PRINTF("[I2C] Audit written: Row %d = 0x%02X\n", row, auditRow);
 }
 
 void writeToADG2188(byte address, byte data) {
@@ -375,11 +466,14 @@ void savePresetToEEPROM(byte presetIndex) {
     return;
   }
 
-  uint16_t eepromAddress = presetIndex * (MATRIX_BYTES + 4);
+  uint16_t eepromAddress = presetIndex * EEPROM_PRESET_STRIDE;
 
   for (int index = 0; index < MATRIX_BYTES; index++) {
-    EEPROM.write(eepromAddress + index, activeState.patchMatrix[index]);
+    EEPROM.update(eepromAddress + index, activeState.patchMatrix[index]);
   }
+
+  // Mark EEPROM as initialised so loadPresetFromEEPROM knows the data is valid
+  EEPROM.update(EEPROM_MAGIC_ADDR, EEPROM_MAGIC_VAL);
 
   DEBUG_PRINTF("[EEPROM] Preset %d saved\n", presetIndex);
   lastEEPROMSaveTime = millis();
@@ -390,7 +484,17 @@ void loadPresetFromEEPROM(byte presetIndex) {
     return;
   }
 
-  uint16_t eepromAddress = presetIndex * (MATRIX_BYTES + 4);
+  // If EEPROM has never been written, default to blank rather than loading garbage
+  if (EEPROM.read(EEPROM_MAGIC_ADDR) != EEPROM_MAGIC_VAL) {
+    DEBUG_PRINTLN(F("[EEPROM] No valid data - defaulting to blank"));
+    activeState.clear();
+    currentPresetIndex = presetIndex;
+    writePatchMatrixToADG2188();
+    flagDisplayUpdate = true;
+    return;
+  }
+
+  uint16_t eepromAddress = presetIndex * EEPROM_PRESET_STRIDE;
 
   for (int index = 0; index < MATRIX_BYTES; index++) {
     activeState.patchMatrix[index] = EEPROM.read(eepromAddress + index);
@@ -427,11 +531,11 @@ void renderRoutingMode() {
   display.setCursor(oledX(statusX), oledY(0));
 
   char label[8];
-  snprintf(label, sizeof(label), "%c:%d", 'A' + cursorX, cursorY + 1);
+  formatCursorPosition(label, sizeof(label), cursorX, cursorY);
   display.println(label);
 
   display.setCursor(oledX(statusX), oledY(10));
-  printFormattedToDisplay("P:%d", currentPresetIndex);
+  display.println(label);
 }
 
 void renderMatrixBox(byte x, byte y) {
@@ -441,14 +545,11 @@ void renderMatrixBox(byte x, byte y) {
   const bool isSelected = activeState.getEntry(y, x);
   const bool isCursorCell = (cursorX == x) && (cursorY == y);
 
-  // Visual spec:
+  // Keep state visibility stable while moving cursor:
   // - unselected: 25% stipple
   // - selected: 100% fill
-  // - audition/cursor cell: 75% stipple + open outline
+  // - cursor: outline only (does not change fill state)
   FillMode mode = isSelected ? FILL_100 : FILL_25;
-  if (isCursorCell) {
-    mode = FILL_75;
-  }
 
   drawStippleRect(boxX, boxY, BOX_SIZE, BOX_SIZE, mode);
 
@@ -499,7 +600,7 @@ void nexus_setup() {
   #else
     DEBUG_PRINTLN(F("BOARD: Not Nano Every macro"));
   #endif
-    DEBUG_PRINTLN(F("ENC MAP: E2(A=4,B=5,SW=6) E1(A=7,B=10,SW=11)"));
+    DEBUG_PRINTLN(F("ENC MAP: E2(A=14,B=15,SW=16) E1(A=17,B=20,SW=21)"));
   }
 
   Wire.begin();
@@ -515,6 +616,9 @@ void nexus_setup() {
   pinMode(ENCODER2_B, INPUT_PULLUP);
   pinMode(ENCODER2_BTN, INPUT_PULLUP);
   DEBUG_PRINTLN(F("[SETUP] Encoder pins configured"));
+  DEBUG_PRINTF("[SETUP] BTN levels E1:%d E2:%d (0=pressed,1=released)\n", digitalRead(ENCODER1_BTN), digitalRead(ENCODER2_BTN));
+  encoder1Button.begin(ENCODER1_BTN, "BTN1");
+  encoder2Button.begin(ENCODER2_BTN, "BTN2");
 
   attachInterrupt(digitalPinToInterrupt(ENCODER1_A), isr_encoder1Tick, CHANGE);
   attachInterrupt(digitalPinToInterrupt(ENCODER2_A), isr_encoder2Tick, CHANGE);
@@ -522,10 +626,8 @@ void nexus_setup() {
   DEBUG_PRINTLN(F("[SETUP] Encoder interrupts attached"));
 
   initializeADG2188();
-  activeState.clear();
-  currentPresetIndex = 0;
-  writePatchMatrixToADG2188();
-  DEBUG_PRINTLN(F("[SETUP] Matrix defaulted to blank (all unselected)"));
+  loadPresetFromEEPROM(0);
+  DEBUG_PRINTLN(F("[SETUP] State restored from EEPROM (or defaulted to blank)"));
 
   flagDisplayUpdate = true;
   DEBUG_PRINTLN(F("[SETUP] Initialization complete\n"));
