@@ -49,13 +49,13 @@ void nexusDebugPrintf(const char* format, ...);
   #warning "Nexus prototype firmware is currently mapped for Arduino Nano Every"
 #endif
 
-#define ENCODER1_A     4
-#define ENCODER1_B     5
-#define ENCODER1_BTN   6
+#define ENCODER2_A     4
+#define ENCODER2_B     5
+#define ENCODER2_BTN   6
 
-#define ENCODER2_A     7
-#define ENCODER2_B     10
-#define ENCODER2_BTN   11
+#define ENCODER1_A     7
+#define ENCODER1_B     10
+#define ENCODER1_BTN   11
 
 // ============================================================================
 // I2C DEVICE ADDRESSES
