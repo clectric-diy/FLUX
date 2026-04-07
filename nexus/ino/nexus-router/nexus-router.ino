@@ -25,12 +25,13 @@
   - OLED shows current matrix state and menu options
   
   SHARED CODE:
-  All I2C, EEPROM, display, and preset functions are in ../nexus-core/nexus-core.cpp/.h
+  Shared hardware, display, EEPROM, and router runtime live in the bundled
+  nexus-core Arduino library at ../libraries/nexus-core/.
   This file implements the base router interface.
   ============================================================================
 */
 
-#include "../nexus-core/nexus-core.h"
+#include <nexus-core.h>
 
 // ============================================================================
 // ROUTER-SPECIFIC DEFINITIONS

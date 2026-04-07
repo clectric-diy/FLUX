@@ -26,21 +26,30 @@ This layout is intentionally beginner-friendly so it's easy to find the right fi
 
 ```
 nexus/
-├── core/          # Shared hardware + matrix logic
-├── router/        # Manual 8x8 matrix routing
-├── lunetta/       # Generative logic/rhythm variants
-└── sequencer/     # Step-sequenced routing variant
+├── ino/
+│   ├── libraries/
+│   │   └── nexus-core/   # Bundled Arduino library with shared Nexus runtime
+│   ├── nexus-router/     # Manual 8x8 matrix routing
+│   ├── nexus-lunetta/    # Generative logic/rhythm variants
+│   └── nexus-sequencer/  # Step-sequenced routing variant
+└── pd/                   # Pure Data exploration and supporting assets
 ```
 
 ## Variants
 
-- [Router](router/README.md) — direct, hands-on matrix routing
-- [Lunetta](lunetta/README.md) — generative and algorithmic behavior
-- [Sequencer](sequencer/README.md) — timed routing patterns
+- [Router](ino/nexus-router/README.md) — direct, hands-on matrix routing
+- [Lunetta](ino/nexus-lunetta/README.md) — generative and algorithmic behavior
+- [Sequencer](ino/nexus-sequencer/README.md) — timed routing patterns
 
 ## Notes
 
-- The shared implementation is in `core/` and reused by all variants.
-- If you are new to Nexus, start with `router/`.
+- If you are new to Nexus, start with `ino/nexus-router/`.
+- If you prefer the Arduino IDE and it can't find `nexus-core`, copy `ino/libraries/nexus-core/` into your Arduino libraries folder.
+
+## Quick Build
+
+- Go to `nexus/ino/` and run `./build.sh router`.
+- Use `./build.sh lunetta`, `./build.sh sequencer`, or `./build.sh all` as needed.
+- Optional board override: `FQBN=... ./build.sh router`.
 
 Community: [clectric.diy](https://clectric.diy)

@@ -33,3 +33,9 @@ Switch between different routing configurations mid-performance. Create dynamic 
 ## Why Router?
 
 For when you need routing that cables can't provide. For patches too complex for traditional modular systems. For signal paths that evolve and adapt. Router gives you the power to rewire your modular system on the fly.
+
+## Build Notes
+
+- Easiest option: from `nexus/ino/`, run `./build.sh router`.
+- Arduino IDE option: open `nexus-router.ino`.
+- If the IDE can't find `nexus-core`, copy `../libraries/nexus-core/` into your Arduino libraries folder.

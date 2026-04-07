@@ -34,3 +34,9 @@ Combine with external modules for even more complexity: clock dividers create po
 ## Why Lunetta?
 
 For when you want your patches to surprise you. For ambient compositions that evolve over hours. For rhythmic complexity that would be impossible to program manually. Lunetta brings algorithmic thinking to modular synthesis—mathematical precision meets musical intuition.
+
+## Build Notes
+
+- Easiest option: from `nexus/ino/`, run `./build.sh lunetta`.
+- Arduino IDE option: open `nexus-lunetta.ino`.
+- If the IDE can't find `nexus-core`, copy `../libraries/nexus-core/` into your Arduino libraries folder.

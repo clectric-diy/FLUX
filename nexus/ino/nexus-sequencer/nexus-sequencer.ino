@@ -27,12 +27,13 @@
   - Clock input advances sequencer automatically
   
   SHARED CODE:
-  All I2C, EEPROM, display, and preset functions are in ../nexus-core/nexus-core.cpp/.h
+  Shared hardware, display, EEPROM, and router primitives live in the bundled
+  nexus-core Arduino library at ../libraries/nexus-core/.
   This file extends the router with step sequencer logic.
   ============================================================================
 */
 
-#include "../nexus-core/nexus-core.h"
+#include <nexus-core.h>
 
 // ============================================================================
 // STEP SEQUENCER DEFINITIONS

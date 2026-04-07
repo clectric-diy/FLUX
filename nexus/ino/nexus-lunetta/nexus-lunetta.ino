@@ -26,12 +26,13 @@
   - Modes available: OFF, XOR-RHYTHM, AND-RHYTHM, NAND-RHYTHM, SHIFT-RHYTHM, LFSR, RUNGLER
   
   SHARED CODE:
-  All I2C, EEPROM, display, and preset functions are in ../nexus-core/nexus-core.cpp/.h
+  Shared hardware, display, EEPROM, and router primitives live in the bundled
+  nexus-core Arduino library at ../libraries/nexus-core/.
   This file extends the router with generative logic.
   ============================================================================
 */
 
-#include "../nexus-core/nexus-core.h"
+#include <nexus-core.h>
 
 // ============================================================================
 // LUNETTA GENERATIVE ENGINE DEFINITIONS

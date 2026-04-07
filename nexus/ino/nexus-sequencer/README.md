@@ -23,3 +23,9 @@ Switch between radically different routing configurations in time. A single butt
 ## Why Sequencer?
 
 Because traditional sequencers control pitch and timing. Nexus controls the very fabric of your patches—the connections between modules. This opens up entirely new creative territories where routing becomes rhythm, and patching becomes performance.
+
+## Build Notes
+
+- Easiest option: from `nexus/ino/`, run `./build.sh sequencer`.
+- Arduino IDE option: open `nexus-sequencer.ino`.
+- If the IDE can't find `nexus-core`, copy `../libraries/nexus-core/` into your Arduino libraries folder.
