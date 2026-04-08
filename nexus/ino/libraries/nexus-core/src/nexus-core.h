@@ -5,15 +5,15 @@
   Purpose
   -------
   This header defines the shared interface for Nexus firmware.
-  It gives all sketches one common vocabulary for state, constants,
+  It gives all sketches one common vocabulary for runtime behavior, constants,
   hardware pins, and function declarations.
 
   What lives here
   ---------------
   1) Hardware and layout constants
-  2) Shared data structures (for example, `PresetState`)
-  3) Global state declarations used across runtime code
-  4) Public function declarations for setup, loop, display, I2C, and EEPROM
+  2) Shared data structures (for example, `Patch`)
+  3) Global runtime variable declarations used across runtime code
+  4) Public function declarations for setup, loop, display, I2C, and memory
 
   How to use it
   -------------
@@ -32,19 +32,21 @@
 #include <EEPROM.h>
 #include <stdarg.h>
 
-#ifndef OLED_RESET
-#define OLED_RESET -1
-#endif
-
 // ============================================================================
 // SERIAL DEBUG INFRASTRUCTURE
 // ============================================================================
-#define SERIAL_DEBUG_ENABLED 1
+// Set one variable to choose debug output detail:
+// 0 = OFF, 1 = ERROR, 2 = INFO, 3 = VERBOSE
+#ifndef SERIAL_DEBUG_LEVEL
+#define SERIAL_DEBUG_LEVEL 2
+#endif
+
+#define SERIAL_DEBUG_ENABLED (SERIAL_DEBUG_LEVEL > 0)
 #define SERIAL_BAUD 115200
 
 void nexusDebugPrintf(const char* format, ...);
 
-#if SERIAL_DEBUG_ENABLED
+#if SERIAL_DEBUG_LEVEL >= 2
   #define DEBUG_PRINT(x) Serial.print(x)
   #define DEBUG_PRINTLN(x) Serial.println(x)
   #define DEBUG_PRINTF(...) nexusDebugPrintf(__VA_ARGS__)
@@ -54,113 +56,147 @@ void nexusDebugPrintf(const char* format, ...);
   #define DEBUG_PRINTF(...)
 #endif
 
-// ============================================================================
-// PIN DEFINITIONS
-// ============================================================================
-#if !defined(ARDUINO_AVR_NANO_EVERY)
-  #warning "Nexus prototype firmware is currently mapped for Arduino Nano Every"
+#if SERIAL_DEBUG_LEVEL >= 3
+  #define DEBUG_VERBOSE_PRINTF(...) nexusDebugPrintf(__VA_ARGS__)
+#else
+  #define DEBUG_VERBOSE_PRINTF(...)
 #endif
 
-#define ENCODER1_A     4   // Physical pin 4  = A0/D14
-#define ENCODER1_B     5   // Physical pin 5  = A1/D15
-#define ENCODER1_BTN   6   // Physical pin 6  = A2/D16
+// ============================================================================
+// PIN DEFINITIONS for ATMega4809 (and Arduino Nano Every)
+// ============================================================================
 
-#define ENCODER2_A     7   // Physical pin 7  = A3/D17
-#define ENCODER2_B     10  // Physical pin 10 = A6/D20 (skips SDA/SCL at 8,9)
-#define ENCODER2_BTN   11  // Physical pin 11 = A7/D21
+#define ENCODER1_A     14  // D14 (Nano Every pin 4)
+#define ENCODER1_B     15  // D15 (Nano Every pin 5)
+#define ENCODER1_BTN   16  // D16 (Nano Every pin 6)
+
+#define ENCODER2_A     17  // D17 (Nano Every pin 7)
+#define ENCODER2_B     20  // D20 (Nano Every pin 10)
+#define ENCODER2_BTN   21  // D21 (Nano Every pin 11)
 
 // ============================================================================
-// I2C DEVICE ADDRESSES
+// ROUTING SWITCH SETTINGS (ADG2188)
 // ============================================================================
-#define ADG2188_INPUT_MUX1_ADDR   0x48
-#define ADG2188_INPUT_MUX2_ADDR   0x49
-#define ADG2188_MAIN_ROUTER_ADDR  0x4A
 
-#define OLED_ADDR   0x3C
-#define OLED_WIDTH  128
-#define OLED_HEIGHT 64
+// Three ADG2188 switch chips handle signal routing.
+// - INPUT_SWITCH: routes signals arriving from external inputs
+#define INPUT_SWITCH_I2C_ADDR   0x48
 
-// 1.3" SH1106-class 128x64 modules commonly need a small X shift when driven
-// through SSD1306-compatible libraries.
-// Tune these if content appears misaligned.
-#define OLED_PIXEL_OFFSET_X       2
-#define OLED_PIXEL_OFFSET_Y       0
-#define OLED_CONTROLLER_OFFSET_Y  0
+// - GENERATED_SWITCH: routes signals generated inside the module by the ATMega
+#define GENERATED_SWITCH_I2C_ADDR   0x49
+
+// - ROUTING_SWITCH: the main 8x8 routing matrix
+#define ROUTING_SWITCH_I2C_ADDR      0x4A
 
 // ============================================================================
-// CONSTANTS
+// ROUTING MATRIX SETTINGS
 // ============================================================================
+
+// The routing matrix is 8x8 and is stored as 8 bytes.
 #define MATRIX_SIZE         8
 #define MATRIX_BYTES        8
+
+// We store 8 preset patches in addition to the active routing matrix.
 #define NUM_PRESETS         8
-#define AUDITION_TIMEOUT_MS 3000
-#define EEPROM_SAVE_DELAY   1000
 
-// Magic byte stored after the preset region to detect first boot vs uninitialised EEPROM.
-// We currently store 8 matrix bytes and reserve 4 bytes per slot for future metadata.
-#define EEPROM_PRESET_STRIDE  (MATRIX_BYTES + 4)          // 12 bytes per preset slot
-#define EEPROM_MAGIC_ADDR     (NUM_PRESETS * EEPROM_PRESET_STRIDE)  // byte 96
-#define EEPROM_MAGIC_VAL      0xAB
+// Memory storage layout:
 
+// - Active patch is stored first.
+#define MEMORY_ACTIVE_PATCH_ADDR    0
+
+// - Each preset stores MATRIX_BYTES.
+#define MEMORY_PRESET_STRIDE        MATRIX_BYTES
+
+// - Presets start immediately after the active patch block.
+#define MEMORY_PRESET_BASE_ADDR     (MEMORY_ACTIVE_PATCH_ADDR + MATRIX_BYTES)
+
+// - An initialization marker tells us whether memory has valid saved data at initial power-up.
+#define MEMORY_INIT_MARKER_ADDR     (MEMORY_PRESET_BASE_ADDR + (NUM_PRESETS * MEMORY_PRESET_STRIDE))
+#define MEMORY_INIT_MARKER_VAL      0xAB
+
+// ============================================================================
+// OLED DISPLAY SETTINGS
+// ============================================================================
+
+// The Nexus Module uses a 1.3" 128x64 OLED display with a SH1106 driver.
+
+#define OLED_I2C_ADDR       0x3C
+#define OLED_WIDTH          128
+#define OLED_HEIGHT         64
+
+#define OLED_PIXEL_X_OFFSET       2
+#define OLED_PIXEL_Y_OFFSET       0
+
+// Grid drawing sizes for the routing view on the OLED.
 #define BOX_SIZE       6
 #define BOX_SPACING    2
+
 #define GRID_PIXEL_SIZE ((MATRIX_SIZE * BOX_SIZE) + ((MATRIX_SIZE - 1) * BOX_SPACING))
+
 #define GRID_START_X   ((OLED_WIDTH - GRID_PIXEL_SIZE) / 2)
 #define GRID_START_Y   ((OLED_HEIGHT - GRID_PIXEL_SIZE) / 2)
 
 // ============================================================================
+// TIMING CONSTANTS
+// ============================================================================
+
+// Timing settings (in milliseconds):
+// - How long a temporary audition stays active.
+#define AUDITION_TIMEOUT_MS 3000
+
+// - How long we wait before writing updates to memory.
+#define MEMORY_SAVE_DELAY   1000
+
+// ============================================================================
 // ENUM: UI STATE MACHINE
 // ============================================================================
+
+// The state machine switches between routing and menu modes when the 
+// first encoder is clicked.
+
 enum UIMode {
   ROUTING_MODE,
   MENU_MODE
 };
 
 // ============================================================================
-// CLASS: PresetState
+// CLASS: Patch
 // ============================================================================
-class PresetState {
-public:
-  byte patchMatrix[MATRIX_BYTES];
-  unsigned long lastModified;
+  
+// Patch stores one complete patch from the routing matrix.
+// Each row is one byte, and each bit in that byte is one connection on/off value.
 
-  PresetState() {
-    memset(patchMatrix, 0, MATRIX_BYTES);
-    lastModified = 0;
+class Patch {
+public:
+  byte patchConnections[MATRIX_BYTES];
+
+  Patch() {
+    memset(patchConnections, 0, MATRIX_BYTES);
   }
 
   void clear() {
-    memset(patchMatrix, 0, MATRIX_BYTES);
-    lastModified = millis();
+    memset(patchConnections, 0, MATRIX_BYTES);
   }
 
-  bool getEntry(byte row, byte col) {
+  bool isPatchConnectionActive(byte row, byte col) const {
     if (row >= MATRIX_SIZE || col >= MATRIX_SIZE) {
       return false;
     }
-    return bitRead(patchMatrix[row], col);
+    return bitRead(patchConnections[row], col);
   }
 
-  void setEntry(byte row, byte col, bool state) {
+  void setPatchConnection(byte row, byte col, bool isConnected) {
     if (row >= MATRIX_SIZE || col >= MATRIX_SIZE) {
       return;
     }
-    bitWrite(patchMatrix[row], col, state);
-    lastModified = millis();
+    bitWrite(patchConnections[row], col, isConnected);
   }
 
-  void toggleEntry(byte row, byte col) {
+  void togglePatchConnection(byte row, byte col) {
     if (row >= MATRIX_SIZE || col >= MATRIX_SIZE) {
       return;
     }
-    bitWrite(patchMatrix[row], col, !bitRead(patchMatrix[row], col));
-    lastModified = millis();
-  }
-
-  void getAuditDiff(const PresetState& other, byte* diffMatrix) {
-    for (int index = 0; index < MATRIX_BYTES; index++) {
-      diffMatrix[index] = patchMatrix[index] ^ other.patchMatrix[index];
-    }
+    bitWrite(patchConnections[row], col, !bitRead(patchConnections[row], col));
   }
 };
 
@@ -168,8 +204,8 @@ public:
 // GLOBAL VARIABLES - DECLARED HERE, DEFINED IN nexus-core.cpp
 // ============================================================================
 extern U8G2_SH1106_128X64_NONAME_F_HW_I2C display;
-extern PresetState activeState;
-extern PresetState presets[NUM_PRESETS];
+extern Patch activePatch;
+extern Patch presetPatches[NUM_PRESETS];
 extern byte currentPresetIndex;
 
 extern UIMode uiMode;
@@ -186,25 +222,27 @@ extern volatile bool flagSaveNeeded;
 extern volatile bool flagDisplayUpdate;
 extern volatile bool flagModeChange;
 
-extern unsigned long lastEEPROMSaveTime;
+extern unsigned long lastMemorySaveTime;
 
 // ============================================================================
 // CORE FUNCTION DECLARATIONS
 // ============================================================================
-PresetState& presetAt(byte idx);
-void loadActiveFromPreset(byte idx);
-void saveActiveToPreset(byte idx);
+Patch& presetPatchAt(byte idx);
+void loadActivePatchFromPreset(byte idx);
+void saveActivePatchToPreset(byte idx);
 void nextPreset();
 void prevPreset();
 
-void initializeADG2188();
-void writePatchMatrixToADG2188();
-void writeAuditToADG2188(byte col, byte row);
-void writeToADG2188(byte address, byte data);
-void writeToADG2188Row(byte address, byte row, byte data);
+void initializeRoutingSwitches();
+void writeActivePatchToRoutingSwitches();
+void writeAuditToRoutingSwitch(byte col, byte row);
+void writeToSwitch(byte address, byte data);
+void writeSwitchRegister(byte address, byte registerIndex, byte data);
 
-void savePresetToEEPROM(byte presetIndex);
-void loadPresetFromEEPROM(byte presetIndex);
+void savePresetToMemory(byte presetIndex);
+void loadPresetFromMemory(byte presetIndex);
+void saveActivePatchToMemory();
+void loadActivePatchFromMemory();
 
 void updateDisplay();
 void renderRoutingMode();

@@ -12,8 +12,8 @@
   1) Runtime state definitions declared in nexus-core.h
   2) Input handling (encoders and buttons)
   3) Display rendering for routing and menu screens
-  4) ADG2188 routing writes over I2C
-  5) Preset save/load behavior with EEPROM
+  4) Routing switch writes over I2C (ADG2188)
+  5) Preset save/load behavior with memory
   6) Main entry points: `nexus_setup()` and `nexus_loop()`
 
   How to use it
@@ -39,9 +39,22 @@ U8G2_SH1106_128X64_NONAME_F_HW_I2C display(U8G2_R0, U8X8_PIN_NONE);
 
 namespace {
 
-byte detectedOledAddress = OLED_ADDR;
+byte detectedOledAddress = OLED_I2C_ADDR;
 constexpr uint32_t I2C_CLOCK_HZ = 100000;
-constexpr bool ENABLE_PIN_TRACE = false;
+
+const __FlashStringHelper* getDebugLevelName() {
+#if SERIAL_DEBUG_LEVEL == 0
+  return F("OFF");
+#elif SERIAL_DEBUG_LEVEL == 1
+  return F("ERROR");
+#elif SERIAL_DEBUG_LEVEL == 2
+  return F("INFO");
+#elif SERIAL_DEBUG_LEVEL == 3
+  return F("VERBOSE");
+#else
+  return F("CUSTOM");
+#endif
+}
 
 bool i2cDevicePresent(byte address) {
   Wire.beginTransmission(address);
@@ -55,7 +68,7 @@ byte detectOledAddress() {
   if (i2cDevicePresent(0x3D)) {
     return 0x3D;
   }
-  return OLED_ADDR;
+  return OLED_I2C_ADDR;
 }
 
 enum FillMode : uint8_t {
@@ -77,11 +90,11 @@ void formatCursorPosition(char* out, size_t outLen, byte x, byte y) {
 }
 
 int16_t oledX(int16_t x) {
-  return x + OLED_PIXEL_OFFSET_X;
+  return x + OLED_PIXEL_X_OFFSET;
 }
 
 int16_t oledY(int16_t y) {
-  return y + OLED_PIXEL_OFFSET_Y;
+  return y + OLED_PIXEL_Y_OFFSET;
 }
 
 void drawStippleRect(int16_t x, int16_t y, int16_t w, int16_t h, FillMode mode) {
@@ -109,8 +122,8 @@ void drawStippleRect(int16_t x, int16_t y, int16_t w, int16_t h, FillMode mode) 
 
 } // namespace
 
-PresetState activeState;
-PresetState presets[NUM_PRESETS];
+Patch activePatch;
+Patch presetPatches[NUM_PRESETS];
 byte currentPresetIndex = 0;
 
 UIMode uiMode = ROUTING_MODE;
@@ -127,7 +140,7 @@ volatile bool flagSaveNeeded = false;
 volatile bool flagDisplayUpdate = false;
 volatile bool flagModeChange = false;
 
-unsigned long lastEEPROMSaveTime = 0;
+unsigned long lastMemorySaveTime = 0;
 
 namespace {
 
@@ -190,9 +203,9 @@ void startAuditioning(byte x, byte y) {
   isAuditioning = true;
   auditTimeoutMs = millis();
 
-  bool isEntryActive = activeState.getEntry(y, x);
+  bool isEntryActive = activePatch.isPatchConnectionActive(y, x);
   if (!isEntryActive) {
-    writeAuditToADG2188(x, y);
+    writeAuditToRoutingSwitch(x, y);
   }
 
   char pos[8];
@@ -205,25 +218,21 @@ void stopAuditioning() {
   isAuditioning = false;
   auditingX = 0;
   auditingY = 0;
-  writePatchMatrixToADG2188();
+  writeActivePatchToRoutingSwitches();
 
-  DEBUG_PRINTLN(F("[AUDITION] Stopped - patchMatrix restored"));
+  DEBUG_PRINTLN(F("[AUDITION] Stopped - active connections restored"));
   flagDisplayUpdate = true;
 }
 
 void logSelectionState(byte x, byte y) {
   char pos[8];
   formatCursorPosition(pos, sizeof(pos), x, y);
-  bool state = activeState.getEntry(y, x);
-  DEBUG_PRINTF("[SELECT] %s = %d (Row %d: 0x%02X)\n", pos, state, y, activeState.patchMatrix[y]);
+  bool isConnected = activePatch.isPatchConnectionActive(y, x);
+  DEBUG_PRINTF("[SELECT] %s = %d (Row %d: 0x%02X)\n", pos, isConnected, y, activePatch.patchConnections[y]);
 }
 
 void traceEncoderPins() {
-#if SERIAL_DEBUG_ENABLED
-  if (!ENABLE_PIN_TRACE) {
-    return;
-  }
-
+#if SERIAL_DEBUG_LEVEL >= 3
   static bool initialized = false;
   static uint8_t lastE2A = HIGH;
   static uint8_t lastE2B = HIGH;
@@ -251,7 +260,7 @@ void traceEncoderPins() {
   }
 
   if (e2a != lastE2A || e2b != lastE2B || e2btn != lastE2Btn || e1a != lastE1A || e1b != lastE1B || e1btn != lastE1Btn) {
-    DEBUG_PRINTF("[PINS] E2(A:%d B:%d SW:%d) E1(A:%d B:%d SW:%d)\n", e2a, e2b, e2btn, e1a, e1b, e1btn);
+    DEBUG_VERBOSE_PRINTF("[PINS] E2(A:%d B:%d SW:%d) E1(A:%d B:%d SW:%d)\n", e2a, e2b, e2btn, e1a, e1b, e1btn);
     lastE2A = e2a;
     lastE2B = e2b;
     lastE2Btn = e2btn;
@@ -267,11 +276,11 @@ void handleActionButtonShortPress() {
     return;
   }
 
-  activeState.toggleEntry(cursorY, cursorX);
+  activePatch.togglePatchConnection(cursorY, cursorX);
   flagSaveNeeded = true;
   flagDisplayUpdate = true;
   logSelectionState(cursorX, cursorY);
-  writePatchMatrixToADG2188();
+  writeActivePatchToRoutingSwitches();
 }
 
 void updateButton(DebouncedButton& button, unsigned long now) {
@@ -280,7 +289,7 @@ void updateButton(DebouncedButton& button, unsigned long now) {
   if (reading != button.rawState) {
     button.rawState = reading;
     button.lastRawChangeMs = now;
-    DEBUG_PRINTF("[%s RAW] %d\n", button.name, reading);
+    DEBUG_VERBOSE_PRINTF("[%s RAW] %d\n", button.name, reading);
   }
 
   if ((now - button.lastRawChangeMs) < BUTTON_DEBOUNCE_MS) {
@@ -293,13 +302,13 @@ void updateButton(DebouncedButton& button, unsigned long now) {
     if (button.stableState == LOW) {
       button.pressStartMs = now;
       button.longHandled = false;
-      DEBUG_PRINTF("[%s] Pressed\n", button.name);
+      DEBUG_VERBOSE_PRINTF("[%s] Pressed\n", button.name);
     } else {
       unsigned long pressDuration = now - button.pressStartMs;
-      DEBUG_PRINTF("[%s] Released after %lu ms\n", button.name, pressDuration);
+      DEBUG_VERBOSE_PRINTF("[%s] Released after %lu ms\n", button.name, pressDuration);
 
       if (!button.longHandled) {
-        DEBUG_PRINTF("[%s] Click\n", button.name);
+        DEBUG_VERBOSE_PRINTF("[%s] Click\n", button.name);
       }
 
       if (button.role == DebouncedButton::ACTION_BUTTON && !button.longHandled) {
@@ -323,11 +332,11 @@ void updateMatrixAuditioning() {
     return;
   }
 
-  bool isEntryActive = activeState.getEntry(auditingY, auditingX);
+  bool isEntryActive = activePatch.isPatchConnectionActive(auditingY, auditingX);
   if (!isEntryActive) {
-    writeAuditToADG2188(auditingX, auditingY);
+    writeAuditToRoutingSwitch(auditingX, auditingY);
   } else {
-    writePatchMatrixToADG2188();
+    writeActivePatchToRoutingSwitches();
   }
 }
 
@@ -425,133 +434,162 @@ void initializeDisplay(const __FlashStringHelper* title) {
 
 } // namespace
 
-PresetState& presetAt(byte idx) {
+Patch& presetPatchAt(byte idx) {
   if (idx >= NUM_PRESETS) {
     idx = 0;
   }
-  return presets[idx];
+  return presetPatches[idx];
 }
 
-void loadActiveFromPreset(byte idx) {
-  activeState = presetAt(idx);
+void loadActivePatchFromPreset(byte idx) {
+  activePatch = presetPatchAt(idx);
   currentPresetIndex = idx;
   DEBUG_PRINTF("[PRESET] Loaded preset %d\n", idx);
 }
 
-void saveActiveToPreset(byte idx) {
-  presetAt(idx) = activeState;
+void saveActivePatchToPreset(byte idx) {
+  presetPatchAt(idx) = activePatch;
   currentPresetIndex = idx;
+  savePresetToMemory(idx);
   DEBUG_PRINTF("[PRESET] Saved active to preset %d\n", idx);
 }
 
 void nextPreset() {
-  savePresetToEEPROM(currentPresetIndex);
   currentPresetIndex = (currentPresetIndex + 1) % NUM_PRESETS;
-  loadPresetFromEEPROM(currentPresetIndex);
+  loadPresetFromMemory(currentPresetIndex);
   DEBUG_PRINTF("[PRESET] Next -> %d\n", currentPresetIndex);
   flagDisplayUpdate = true;
 }
 
 void prevPreset() {
-  savePresetToEEPROM(currentPresetIndex);
-
   if (currentPresetIndex == 0) {
     currentPresetIndex = NUM_PRESETS - 1;
   } else {
     currentPresetIndex--;
   }
 
-  loadPresetFromEEPROM(currentPresetIndex);
+  loadPresetFromMemory(currentPresetIndex);
   DEBUG_PRINTF("[PRESET] Prev -> %d\n", currentPresetIndex);
   flagDisplayUpdate = true;
 }
 
-void initializeADG2188() {
-  DEBUG_PRINTLN(F("[I2C] Initializing ADG2188 switches..."));
+void initializeRoutingSwitches() {
+  DEBUG_PRINTLN(F("[I2C] Initializing routing switches (ADG2188)..."));
 
-  writeToADG2188(ADG2188_INPUT_MUX1_ADDR, 0x00);
-  writeToADG2188(ADG2188_INPUT_MUX2_ADDR, 0x00);
+  writeToSwitch(INPUT_SWITCH_I2C_ADDR, 0x00);
+  writeToSwitch(GENERATED_SWITCH_I2C_ADDR, 0x00);
 
   for (int row = 0; row < MATRIX_BYTES; row++) {
-    writeToADG2188Row(ADG2188_MAIN_ROUTER_ADDR, row, 0x00);
+    writeSwitchRegister(ROUTING_SWITCH_I2C_ADDR, row, 0x00);
   }
 
-  DEBUG_PRINTLN(F("[I2C] ADG2188 initialization complete"));
+  DEBUG_PRINTLN(F("[I2C] Routing switch initialization complete (ADG2188)"));
 }
 
-void writePatchMatrixToADG2188() {
+void writeActivePatchToRoutingSwitches() {
   for (int row = 0; row < MATRIX_BYTES; row++) {
-    writeToADG2188Row(ADG2188_MAIN_ROUTER_ADDR, row, activeState.patchMatrix[row]);
+    writeSwitchRegister(ROUTING_SWITCH_I2C_ADDR, row, activePatch.patchConnections[row]);
   }
 
-  DEBUG_PRINTLN(F("[I2C] PatchMatrix written to ADG2188"));
+  DEBUG_PRINTLN(F("[I2C] Active patch written to routing switches (ADG2188)"));
 }
 
-void writeAuditToADG2188(byte col, byte row) {
+void writeAuditToRoutingSwitch(byte col, byte row) {
   if (row >= MATRIX_SIZE || col >= MATRIX_SIZE) {
     return;
   }
 
-  byte auditRow = activeState.patchMatrix[row] | (1 << col);
-  writeToADG2188Row(ADG2188_MAIN_ROUTER_ADDR, row, auditRow);
+  byte auditRow = activePatch.patchConnections[row] | (1 << col);
+  writeSwitchRegister(ROUTING_SWITCH_I2C_ADDR, row, auditRow);
 }
 
-void writeToADG2188(byte address, byte data) {
+void writeToSwitch(byte address, byte data) {
   Wire.beginTransmission(address);
   Wire.write(data);
   Wire.endTransmission();
 }
 
-void writeToADG2188Row(byte address, byte row, byte data) {
+void writeSwitchRegister(byte address, byte registerIndex, byte data) {
   Wire.beginTransmission(address);
-  Wire.write(row);
+  Wire.write(registerIndex);
   Wire.write(data);
   Wire.endTransmission();
 }
 
-void savePresetToEEPROM(byte presetIndex) {
+void savePresetToMemory(byte presetIndex) {
   if (presetIndex >= NUM_PRESETS) {
     return;
   }
 
-  uint16_t eepromAddress = presetIndex * EEPROM_PRESET_STRIDE;
+  uint16_t memoryAddress = MEMORY_PRESET_BASE_ADDR + (presetIndex * MEMORY_PRESET_STRIDE);
 
   for (int index = 0; index < MATRIX_BYTES; index++) {
-    EEPROM.update(eepromAddress + index, activeState.patchMatrix[index]);
+    EEPROM.update(memoryAddress + index, activePatch.patchConnections[index]);
   }
 
-  // Mark EEPROM as initialised so loadPresetFromEEPROM knows the data is valid
-  EEPROM.update(EEPROM_MAGIC_ADDR, EEPROM_MAGIC_VAL);
+  // Write the initialization marker so future loads know the data is valid.
+  EEPROM.update(MEMORY_INIT_MARKER_ADDR, MEMORY_INIT_MARKER_VAL);
 
-  DEBUG_PRINTF("[EEPROM] Preset %d saved\n", presetIndex);
-  lastEEPROMSaveTime = millis();
+  DEBUG_PRINTF("[MEMORY] Preset %d saved\n", presetIndex);
+  lastMemorySaveTime = millis();
 }
 
-void loadPresetFromEEPROM(byte presetIndex) {
+void saveActivePatchToMemory() {
+  for (int index = 0; index < MATRIX_BYTES; index++) {
+    EEPROM.update(MEMORY_ACTIVE_PATCH_ADDR + index, activePatch.patchConnections[index]);
+  }
+
+  // Write the initialization marker so future loads know the data is valid.
+  EEPROM.update(MEMORY_INIT_MARKER_ADDR, MEMORY_INIT_MARKER_VAL);
+
+  DEBUG_PRINTLN(F("[MEMORY] Active patch saved"));
+  lastMemorySaveTime = millis();
+}
+
+void loadPresetFromMemory(byte presetIndex) {
   if (presetIndex >= NUM_PRESETS) {
     return;
   }
 
-  // If EEPROM has never been written, default to blank rather than loading garbage
-  if (EEPROM.read(EEPROM_MAGIC_ADDR) != EEPROM_MAGIC_VAL) {
-    DEBUG_PRINTLN(F("[EEPROM] No valid data - defaulting to blank"));
-    activeState.clear();
+  // If memory has never been written, default to blank rather than loading garbage
+  if (EEPROM.read(MEMORY_INIT_MARKER_ADDR) != MEMORY_INIT_MARKER_VAL) {
+    DEBUG_PRINTLN(F("[MEMORY] No valid data - defaulting to blank"));
+    activePatch.clear();
     currentPresetIndex = presetIndex;
-    writePatchMatrixToADG2188();
+    writeActivePatchToRoutingSwitches();
     flagDisplayUpdate = true;
     return;
   }
 
-  uint16_t eepromAddress = presetIndex * EEPROM_PRESET_STRIDE;
+  uint16_t memoryAddress = MEMORY_PRESET_BASE_ADDR + (presetIndex * MEMORY_PRESET_STRIDE);
 
   for (int index = 0; index < MATRIX_BYTES; index++) {
-    activeState.patchMatrix[index] = EEPROM.read(eepromAddress + index);
+    activePatch.patchConnections[index] = EEPROM.read(memoryAddress + index);
   }
 
   currentPresetIndex = presetIndex;
-  writePatchMatrixToADG2188();
+  writeActivePatchToRoutingSwitches();
 
-  DEBUG_PRINTF("[EEPROM] Preset %d loaded\n", presetIndex);
+  DEBUG_PRINTF("[MEMORY] Preset %d loaded\n", presetIndex);
+  flagDisplayUpdate = true;
+}
+
+void loadActivePatchFromMemory() {
+  // If memory has never been written, default to blank rather than loading garbage.
+  if (EEPROM.read(MEMORY_INIT_MARKER_ADDR) != MEMORY_INIT_MARKER_VAL) {
+    DEBUG_PRINTLN(F("[MEMORY] No valid active patch - defaulting to blank"));
+    activePatch.clear();
+    writeActivePatchToRoutingSwitches();
+    flagDisplayUpdate = true;
+    return;
+  }
+
+  for (int index = 0; index < MATRIX_BYTES; index++) {
+    activePatch.patchConnections[index] = EEPROM.read(MEMORY_ACTIVE_PATCH_ADDR + index);
+  }
+
+  writeActivePatchToRoutingSwitches();
+  DEBUG_PRINTLN(F("[MEMORY] Active patch loaded"));
   flagDisplayUpdate = true;
 }
 
@@ -593,7 +631,7 @@ void renderMatrixBox(byte x, byte y) {
   uint16_t boxX = oledX(GRID_START_X + (x * (BOX_SIZE + BOX_SPACING)));
   uint16_t boxY = oledY(GRID_START_Y + (y * (BOX_SIZE + BOX_SPACING)));
 
-  const bool isSelected = activeState.getEntry(y, x);
+  const bool isSelected = activePatch.isPatchConnectionActive(y, x);
   const bool isCursorCell = (cursorX == x) && (cursorY == y);
 
   // Keep state visibility stable while moving cursor:
@@ -631,9 +669,9 @@ void printDebugStatus() {
   DEBUG_PRINTF("Audition: %s (X=%d Y=%d)\n", isAuditioning ? "ON" : "OFF", auditingX, auditingY);
   DEBUG_PRINTF("Preset: %d\n", currentPresetIndex);
 
-  DEBUG_PRINT(F("PatchMatrix: "));
+  DEBUG_PRINT(F("Connections by row: "));
   for (int index = 0; index < MATRIX_BYTES; index++) {
-    DEBUG_PRINTF("0x%02X ", activeState.patchMatrix[index]);
+    DEBUG_PRINTF("0x%02X ", activePatch.patchConnections[index]);
   }
   DEBUG_PRINTLN();
 }
@@ -647,10 +685,12 @@ void nexus_setup() {
     DEBUG_PRINTLN(F("\n=== NEXUS ROUTER STARTING ==="));
     DEBUG_PRINTLN(F("VARIANT: Base Router"));
   #if defined(ARDUINO_AVR_NANO_EVERY)
-    DEBUG_PRINTLN(F("BOARD: Arduino Nano Every (ATmega4809)"));
+    DEBUG_PRINTLN(F("BOARD: Arduino Nano Every (ATMega4809)"));
   #else
     DEBUG_PRINTLN(F("BOARD: Not Nano Every macro"));
   #endif
+    DEBUG_PRINT(F("DEBUG LEVEL: "));
+    DEBUG_PRINTLN(getDebugLevelName());
     DEBUG_PRINTF("ENC MAP: E1(A=%d,B=%d,SW=%d) E2(A=%d,B=%d,SW=%d)\n",
                  ENCODER1_A, ENCODER1_B, ENCODER1_BTN,
                  ENCODER2_A, ENCODER2_B, ENCODER2_BTN);
@@ -678,9 +718,9 @@ void nexus_setup() {
 
   DEBUG_PRINTLN(F("[SETUP] Encoder interrupts attached"));
 
-  initializeADG2188();
-  loadPresetFromEEPROM(0);
-  DEBUG_PRINTLN(F("[SETUP] State restored from EEPROM (or defaulted to blank)"));
+  initializeRoutingSwitches();
+  loadActivePatchFromMemory();
+  DEBUG_PRINTLN(F("[SETUP] Active patch restored from memory (or defaulted to blank)"));
 
   flagDisplayUpdate = true;
   DEBUG_PRINTLN(F("[SETUP] Initialization complete\n"));
@@ -705,10 +745,10 @@ void nexus_loop() {
     updateMatrixAuditioning();
   }
 
-  if (flagSaveNeeded && (now - lastEEPROMSaveTime > EEPROM_SAVE_DELAY)) {
+  if (flagSaveNeeded && (now - lastMemorySaveTime > MEMORY_SAVE_DELAY)) {
     flagSaveNeeded = false;
-    savePresetToEEPROM(currentPresetIndex);
-    DEBUG_PRINTF("[EEPROM] Saved at %lu ms\n", now);
+    saveActivePatchToMemory();
+    DEBUG_PRINTF("[MEMORY] Saved at %lu ms\n", now);
   }
 
   if (flagDisplayUpdate) {
