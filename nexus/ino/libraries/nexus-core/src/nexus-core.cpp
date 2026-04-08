@@ -315,9 +315,9 @@ void isr_encoder1Tick() {
 
 void isr_encoder2Tick() {
   if (digitalRead(ENCODER2_A) != digitalRead(ENCODER2_B)) {
-    encoder2Delta++;
-  } else {
     encoder2Delta--;
+  } else {
+    encoder2Delta++;
   }
 }
 
