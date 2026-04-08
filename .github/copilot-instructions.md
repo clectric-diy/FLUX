@@ -36,9 +36,9 @@
 - Community discussions at [GitHub Discussions](https://github.com/orgs/clectric-diy/discussions)
 
 ### 3. Licensing
-- **Firmware**: Called FLUX are licensed under the MIT License
-- **Hardware**: Are licensed under the CERN Open Hardware License (OHL) v2 or later. Some are strongly reciprocal others are weakly reciprocal. See individual repos for details.
-- **Documentation/Libraries**: are licensed under the Creative Commons Attribution Share Alike 4.0 International License (CC BY-SA 4.0).
+- **Firmware**: FLUX firmware is licensed under the MIT License.
+- **Hardware**: Hardware designs are licensed under the CERN Open Hardware License (OHL) v2 or later. Some designs are strongly reciprocal and others are weakly reciprocal. See individual repositories for details.
+- **Documentation/Libraries**: Documentation and libraries are licensed under the Creative Commons Attribution Share Alike 4.0 International License (CC BY-SA 4.0).
 - Always check the repo or [licensing page](https://clectric.diy/licensing) for details
 
 ### 4. Naming & Branding
@@ -52,69 +52,58 @@
 - **Documentation**: Focus on creative/functional descriptions, not just technical details
 - **Testing**: Each module/variant should compile and run independently
 - **Hardware Compatibility**: AE Modular standard (0-5V), Daisy Seed, ATmega4809-A, I2C/SPI expansion for Arc modules
-- **Post-refactor path convention**: Spark library/tooling paths now live under `spark/cpp/` (not repo root). Prefer script-relative path resolution in tooling and CI.
+- **Spark path convention**: Spark library/tooling paths live under `spark/cpp/` (not repo root). Prefer script-relative path resolution in tooling and CI.
 - **Nexus runtime convention**: Arduino projects live under `nexus/ino/`; keep shared implementation in the bundled Arduino library at `nexus/ino/libraries/nexus-core/src/` and keep variants as sibling sketches.
 
-### 6. Post-Refactor Guardrails (Current State)
-- **Do not reintroduce old root paths**: `libDaisy/`, `DaisySP/`, `stmlib/`, `helper.py`, and `ci/` are under `spark/cpp/`.
+### 5.1 First-Principles Coding Standard (Beginner-First)
+- **Primary audience**: New makers and novice programmers learning embedded systems through Spark and Nexus.
+- **Textbook style required**: Write code that reads like a teaching example, not a code-golf or clever production trick.
+- **Naming clarity over brevity**: Prefer intuitive, descriptive names (`encoderDirection`, `isButtonPressed`) over short/ambiguous names (`dir`, `bp`, `tmp`).
+- **Simple and elegant solutions**: Prefer the smallest understandable design that works reliably. Avoid unnecessary abstractions, metaprogramming, or hidden control flow.
+- **Single-responsibility functions**: Keep functions focused and short enough that beginners can follow them in one read.
+- **Explain intent, not noise**: Comments should explain *why* something exists or *how* hardware behavior maps to code, not restate obvious syntax.
+- **Teaching-friendly structure**: Group related constants, clearly separate setup/runtime paths, and keep state transitions explicit.
+- **Predictable behavior first**: Avoid “magic” side effects; make state changes and timing assumptions visible and documented.
+
+### 5.2 Documentation & Comment Tone (Community Onboarding)
+- **Inviting tone**: Comments and README content should welcome new community members and assume curiosity, not prior expertise.
+- **Starter context**: For each module/runtime, include a plain-language overview, what problem it solves, and where to begin editing.
+- **Learning path**: Prefer docs that help users take a first step, then a second step (build → flash → tweak one parameter).
+- **Glossary mindset**: Define hardware or DSP terms briefly when first introduced.
+- **Mentorship expectation**: Intermediate and advanced contributors should model supportive explanations and leave clear breadcrumbs for novices.
+- **No gatekeeping language**: Avoid wording that shames beginners or implies only experts should modify code.
+
+### 6. Repository Guardrails
+- **Spark root layout**: `libDaisy/`, `DaisySP/`, `stmlib/`, `helper.py`, and `ci/` are located under `spark/cpp/`.
 - **Spark build/tooling references** should target `spark/cpp/...` and remain script-relative where possible.
 - **Nexus shared includes** in variants should use Arduino library include style (`#include <nexus-core.h>`) from `nexus/ino/nexus-{router,lunetta,sequencer}/`.
 - **Nexus shared code location**: keep shared runtime in `nexus/ino/libraries/nexus-core/src/`; do not duplicate variant-specific copies.
 - **Runtime discoverability matters**: prefer explicit runtime folders like `nexus/{ino,pd}` and `spark/{cpp,ino,max,pd,rs}` for beginner clarity.
 - **Brand/module style**: use `Nexus` (not all-caps) in user-facing docs.
 
-## Quick References
-- [clectric.diy](https://clectric.diy) — Main site, project overviews, and resources
-- [clectric-diy GitHub](https://github.com/clectric-diy) — All repositories
-- [FLUX repo](https://github.com/clectric-diy/FLUX) — This firmware repository
-- [Nexus-AE repo](https://github.com/clectric-diy/Nexus-AE) — Hardware and generative sequencer
-- [Spark-AE repo](https://github.com/clectric-diy/Spark-AE) — Daisy Seed-based module
-- [Licensing](https://clectric.diy/licensing) — License details for all projects
-- [Discussions](https://github.com/orgs/clectric-diy/discussions) — Community forum
-
-## Example Directory Structure
-```
-FLUX/
-├── nexus/               # Arduino-based AE Modular switch matrix
-│   ├── ino/             # Arduino runtime sketches and tools
-│   │   ├── libraries/
-│   │   │   └── nexus-core/
-│   │   │       ├── library.properties
-│   │   │       └── src/
-│   │   │           ├── nexus-core.h
-│   │   │           └── nexus-core.cpp
-│   │   ├── nexus-router/    # Pure signal routing
-│   │   ├── nexus-lunetta/   # Generative chaos engine
-│   │   ├── nexus-sequencer/ # Step pattern sequencer
-│   │   ├── build.sh         # Local build helper
-│   │   └── scripts/         # IDE/support scripts
-│   └── pd/              # Pure Data support files
-├── spark/               # Daisy Seed-based module(s)
-│   └── cpp/             # C++ firmware and build dependencies
-│       ├── libDaisy/    # Daisy Seed HAL (git submodule)
-│       ├── DaisySP/     # Daisy DSP library (git submodule)
-│       ├── stmlib/      # STM32 utilities (git submodule)
-│       ├── daisy_spark.h    # Spark Board Support Package (BSP) header
-│       ├── daisy_spark.cpp  # Spark BSP implementation
-│       ├── helper.py    # Project management utility (create/copy/update projects)
-│       ├── ci/          # CI scripts (build_libs.sh)
-│       └── spark-init/  # SynthVoice-based firmware, expanding to effects/looper
-│   ├── ino/             # Arduino runtime projects
-│   ├── max/             # Max/MSP runtime projects
-│   ├── pd/              # Pure Data runtime projects
-│   └── rs/              # Rust runtime projects
-└── arcs/                # Expansion modules (fader, display, etc.) for Spark/Nexus
-```
-
 ## Project Philosophy
 - **Open source first**: All code, hardware, and docs are open for remixing and learning
 - **Community-driven**: Designed for and by the Synth DIY community
 - **Creative empowerment**: Lower barriers, encourage experimentation, and support new makers
 - **Branding**: FLUX is the firmware platform; clectric.diy is the community and resource hub; clectric is the overarching entity (LLC)
-- **Naming**: To prevent confusion, makers are encouraged to refer to their own builds by the module name (e.g., "Nexus" or "Spark") and refer to the using FLUX firmware, but must avoid using "clectric" or "electric" in their own project names to prevent confusion with the clectric brand.
+- **Naming**: To prevent confusion, makers are encouraged to refer to their own builds by module name (e.g., "Nexus" or "Spark") and describe their software as using FLUX firmware. Avoid using "clectric" or "electric" in project names to prevent brand confusion.
 
-## See Also
-- [store.clectric.diy](https://store.clectric.diy/) — Hardware kits and modules
-- [AE Modular format](https://clectric.diy/formats/ae-modular/)
-- [KiCad tools](https://clectric.diy/tools/KiCad.html)
-- [Guidebook](https://github.com/clectric-diy/clectricDIY-Guidebook)
+## AI Agent Contribution Rules (Enforced)
+- Prefer readability over cleverness in every code change.
+- When choosing between two valid implementations, choose the one a beginner can debug with a serial monitor and a datasheet.
+- Add or refine comments/README text when behavior is non-obvious, hardware-specific, or likely to confuse first-time contributors.
+- Prefer short, plain-language explanations in comments and docs before introducing advanced terms.
+- Keep public interfaces and variable names self-explanatory; avoid unexplained acronyms.
+- If complexity is required, document the constraint and provide a short “how to reason about this” note.
+
+## See Also (Tools We Use)
+- **Tooling preference**: Prefer open-source and free-to-use tools whenever possible.
+- [Arduino CLI](https://arduino.github.io/arduino-cli/latest/) — Build/upload automation for Arduino workflows
+- [Git](https://git-scm.com/) — Version control and collaboration
+- [GitHub](https://github.com/) — Source hosting, issues, and discussions
+- [Visual Studio Code](https://code.visualstudio.com/) — Primary code editor for firmware, docs, and integrated build/debug workflows
+- [KiCad](https://www.kicad.org/) — Open-source PCB and schematic design
+- [FreeCAD](https://www.freecad.org/) — Open-source mechanical/CAD design
+- [Pure Data](https://puredata.info/) — Open-source visual programming for audio and interaction
+- [PlugData](https://plugdata.org/) — Open-source visual patching environment based on Pure Data, with plugin and standalone workflows
+- [Max](https://cycling74.com/products/max) — Optional commercial runtime used in some Spark workflows
