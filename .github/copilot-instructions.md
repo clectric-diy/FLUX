@@ -73,6 +73,26 @@
 - **Mentorship expectation**: Intermediate and advanced contributors should model supportive explanations and leave clear breadcrumbs for novices.
 - **No gatekeeping language**: Avoid wording that shames beginners or implies only experts should modify code.
 
+### 5.3 Nexus Terminology Canon (Enforced)
+- **Use synth-native hierarchy** in Nexus code and comments: **matrix → patch → preset patch → connection**.
+- **Patch vocabulary**:
+  - Prefer `Patch`, `activePatch`, and `presetPatches`.
+  - A patch is a complete routing configuration.
+  - A connection is one on/off route bit within that patch.
+  - In modular synth terms, think of a patch as the full cable setup for the current sound/behavior; in Nexus this is represented digitally by the full 8x8 routing configuration.
+  - Teaching cue for comments/docs: explain patch first as "the full routing setup," then describe individual connections as the smaller parts inside it.
+- **Memory vocabulary**:
+  - Prefer `Memory` terminology in public constants, function names, and logs (`save...ToMemory`, `load...FromMemory`, `MEMORY_*`).
+  - Use `EEPROM` only when calling the Arduino EEPROM API or explicitly discussing that hardware API.
+- **Switch vocabulary**:
+  - Use role-based names for the three switch chips: `INPUT_SWITCH_*`, `GENERATED_SWITCH_*`, `ROUTING_SWITCH_*`.
+  - Use abstraction names in APIs (`RoutingSwitch`, `Switch`) and keep chip-specific term `ADG2188` in comments/logs that describe the actual IC.
+- **Write-helper naming**:
+  - Prefer generic helper names like `writeToSwitch(...)`.
+  - Prefer register-oriented wording for addressed writes: `writeSwitchRegister(...)`.
+- **Avoid backsliding to older terms** unless required for compatibility:
+  - Avoid legacy public names containing `State`, `EEPROM`, `ADG2188` (as API names), `SOCKET_INPUT_SIGNALS`, or `...Row` where `Register` is the intended abstraction.
+
 ### 6. Repository Guardrails
 - **Spark root layout**: `libDaisy/`, `DaisySP/`, `stmlib/`, `helper.py`, and `ci/` are located under `spark/cpp/`.
 - **Spark build/tooling references** should target `spark/cpp/...` and remain script-relative where possible.
