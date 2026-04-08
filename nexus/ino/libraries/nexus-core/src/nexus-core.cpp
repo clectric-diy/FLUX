@@ -1,3 +1,29 @@
+/*
+  ============================================================================
+  File: nexus-core.cpp
+  ============================================================================
+  Purpose
+  -------
+  This source file implements the shared Nexus runtime.
+  It is the single place where hardware behavior and UI flow are executed.
+
+  What lives here
+  ---------------
+  1) Runtime state definitions declared in nexus-core.h
+  2) Input handling (encoders and buttons)
+  3) Display rendering for routing and menu screens
+  4) ADG2188 routing writes over I2C
+  5) Preset save/load behavior with EEPROM
+  6) Main entry points: `nexus_setup()` and `nexus_loop()`
+
+  How to use it
+  -------------
+  - Keep declarations in nexus-core.h and implementations in this file.
+  - Add shared runtime behavior here so all Nexus sketches stay consistent.
+  - Use `nexus_setup()` and `nexus_loop()` as the standard runtime entry points.
+  ============================================================================
+*/
+
 #include "nexus-core.h"
 
 void nexusDebugPrintf(const char* format, ...) {
@@ -14,6 +40,8 @@ U8G2_SH1106_128X64_NONAME_F_HW_I2C display(U8G2_R0, U8X8_PIN_NONE);
 namespace {
 
 byte detectedOledAddress = OLED_ADDR;
+constexpr uint32_t I2C_CLOCK_HZ = 100000;
+constexpr bool ENABLE_PIN_TRACE = false;
 
 bool i2cDevicePresent(byte address) {
   Wire.beginTransmission(address);
@@ -32,7 +60,6 @@ byte detectOledAddress() {
 
 enum FillMode : uint8_t {
   FILL_25,
-  FILL_75,
   FILL_100,
 };
 
@@ -71,8 +98,6 @@ void drawStippleRect(int16_t x, int16_t y, int16_t w, int16_t h, FillMode mode) 
 
       if (mode == FILL_25) {
         on = ((gx & 1) == 0) && ((gy & 1) == 0);  // 1/4 pixels on
-      } else if (mode == FILL_75) {
-        on = !(((gx & 1) == 1) && ((gy & 1) == 1)); // 3/4 pixels on
       }
 
       if (on) {
@@ -110,17 +135,24 @@ constexpr unsigned long BUTTON_DEBOUNCE_MS = 12;
 constexpr unsigned long BUTTON_LONG_PRESS_MS = 3000;
 
 struct DebouncedButton {
+  enum Role : uint8_t {
+    NAVIGATION_BUTTON,
+    ACTION_BUTTON,
+  };
+
   uint8_t pin;
   const char* name;
+  Role role;
   bool rawState;
   bool stableState;
   unsigned long lastRawChangeMs;
   unsigned long pressStartMs;
   bool longHandled;
 
-  void begin(uint8_t buttonPin, const char* buttonName) {
+  void begin(uint8_t buttonPin, const char* buttonName, Role buttonRole) {
     pin = buttonPin;
     name = buttonName;
+    role = buttonRole;
     rawState = digitalRead(pin);
     stableState = rawState;
     lastRawChangeMs = millis();
@@ -132,12 +164,20 @@ struct DebouncedButton {
 DebouncedButton encoder1Button;
 DebouncedButton encoder2Button;
 
-void routerHandleMenuEncoder1(int8_t delta) {
-  if (delta > 0) {
+void movePresetSelectionBySteps(int8_t delta) {
+  while (delta > 0) {
     nextPreset();
-  } else if (delta < 0) {
-    prevPreset();
+    delta--;
   }
+
+  while (delta < 0) {
+    prevPreset();
+    delta++;
+  }
+}
+
+void routerHandleMenuEncoder1(int8_t delta) {
+  movePresetSelectionBySteps(delta);
 }
 
 void routerHandleMenuEncoder2(int8_t delta) {
@@ -179,6 +219,11 @@ void logSelectionState(byte x, byte y) {
 }
 
 void traceEncoderPins() {
+#if SERIAL_DEBUG_ENABLED
+  if (!ENABLE_PIN_TRACE) {
+    return;
+  }
+
   static bool initialized = false;
   static uint8_t lastE2A = HIGH;
   static uint8_t lastE2B = HIGH;
@@ -214,9 +259,10 @@ void traceEncoderPins() {
     lastE1B = e1b;
     lastE1Btn = e1btn;
   }
+#endif
 }
 
-void handleEncoder2ShortPress() {
+void handleActionButtonShortPress() {
   if (uiMode != ROUTING_MODE) {
     return;
   }
@@ -256,8 +302,8 @@ void updateButton(DebouncedButton& button, unsigned long now) {
         DEBUG_PRINTF("[%s] Click\n", button.name);
       }
 
-      if (&button == &encoder2Button && !button.longHandled) {
-        handleEncoder2ShortPress();
+      if (button.role == DebouncedButton::ACTION_BUTTON && !button.longHandled) {
+        handleActionButtonShortPress();
       }
     }
   }
@@ -265,7 +311,7 @@ void updateButton(DebouncedButton& button, unsigned long now) {
   if (button.stableState == LOW && !button.longHandled && (now - button.pressStartMs) >= BUTTON_LONG_PRESS_MS) {
     button.longHandled = true;
 
-    if (&button == &encoder2Button) {
+    if (button.role == DebouncedButton::ACTION_BUTTON) {
       flagModeChange = true;
       DEBUG_PRINTLN(F("[BTN2] Long press (3s) - mode change"));
     }
@@ -324,31 +370,33 @@ void isr_encoder2Tick() {
 void processEncoderInput() {
   traceEncoderPins();
 
-  if (encoder1Delta != 0) {
+  int8_t horizontalDelta = encoder1Delta;
+  if (horizontalDelta != 0) {
     if (uiMode == ROUTING_MODE) {
-      int newX = constrain((int) cursorX + encoder1Delta, 0, MATRIX_SIZE - 1);
+      int newX = constrain((int) cursorX + horizontalDelta, 0, MATRIX_SIZE - 1);
       if (newX != cursorX) {
         cursorX = newX;
         startAuditioning(cursorX, cursorY);
         flagDisplayUpdate = true;
       }
     } else {
-      routerHandleMenuEncoder1(encoder1Delta);
+      routerHandleMenuEncoder1(horizontalDelta);
     }
 
     encoder1Delta = 0;
   }
 
-  if (encoder2Delta != 0) {
+  int8_t verticalDelta = encoder2Delta;
+  if (verticalDelta != 0) {
     if (uiMode == ROUTING_MODE) {
-      int newY = constrain((int) cursorY + encoder2Delta, 0, MATRIX_SIZE - 1);
+      int newY = constrain((int) cursorY + verticalDelta, 0, MATRIX_SIZE - 1);
       if (newY != cursorY) {
         cursorY = newY;
         startAuditioning(cursorX, cursorY);
         flagDisplayUpdate = true;
       }
     } else {
-      routerHandleMenuEncoder2(encoder2Delta);
+      routerHandleMenuEncoder2(verticalDelta);
     }
 
     encoder2Delta = 0;
@@ -535,7 +583,10 @@ void renderRoutingMode() {
   display.println(label);
 
   display.setCursor(oledX(statusX), oledY(10));
-  display.println(label);
+  printFormattedToDisplay("P:%d", currentPresetIndex + 1);
+
+  display.setCursor(oledX(statusX), oledY(20));
+  display.println(isAuditioning ? F("AUD") : F("   "));
 }
 
 void renderMatrixBox(byte x, byte y) {
@@ -600,11 +651,13 @@ void nexus_setup() {
   #else
     DEBUG_PRINTLN(F("BOARD: Not Nano Every macro"));
   #endif
-    DEBUG_PRINTLN(F("ENC MAP: E2(A=14,B=15,SW=16) E1(A=17,B=20,SW=21)"));
+    DEBUG_PRINTF("ENC MAP: E1(A=%d,B=%d,SW=%d) E2(A=%d,B=%d,SW=%d)\n",
+                 ENCODER1_A, ENCODER1_B, ENCODER1_BTN,
+                 ENCODER2_A, ENCODER2_B, ENCODER2_BTN);
   }
 
   Wire.begin();
-  Wire.setClock(100000);
+  Wire.setClock(I2C_CLOCK_HZ);
   DEBUG_PRINTLN(F("[SETUP] I2C bus initialized @ 100 kHz"));
 
   initializeDisplay(F("NEXUS ROUTER"));
@@ -617,8 +670,8 @@ void nexus_setup() {
   pinMode(ENCODER2_BTN, INPUT_PULLUP);
   DEBUG_PRINTLN(F("[SETUP] Encoder pins configured"));
   DEBUG_PRINTF("[SETUP] BTN levels E1:%d E2:%d (0=pressed,1=released)\n", digitalRead(ENCODER1_BTN), digitalRead(ENCODER2_BTN));
-  encoder1Button.begin(ENCODER1_BTN, "BTN1");
-  encoder2Button.begin(ENCODER2_BTN, "BTN2");
+  encoder1Button.begin(ENCODER1_BTN, "BTN1", DebouncedButton::NAVIGATION_BUTTON);
+  encoder2Button.begin(ENCODER2_BTN, "BTN2", DebouncedButton::ACTION_BUTTON);
 
   attachInterrupt(digitalPinToInterrupt(ENCODER1_A), isr_encoder1Tick, CHANGE);
   attachInterrupt(digitalPinToInterrupt(ENCODER2_A), isr_encoder2Tick, CHANGE);

@@ -1,13 +1,25 @@
 /*
   ============================================================================
-  nexus-core - Shared hardware abstraction and router runtime for Nexus firmware
+  File: nexus-core.h
   ============================================================================
-  This library contains the shared definitions, classes, and function
-  declarations used by the Nexus firmware family (Router, Lunetta, Sequencer).
+  Purpose
+  -------
+  This header defines the shared interface for Nexus firmware.
+  It gives all sketches one common vocabulary for state, constants,
+  hardware pins, and function declarations.
 
-  Router uses the library's `nexus_setup()` / `nexus_loop()` entry points.
-  Other variants may call the lower-level shared functions directly and keep
-  their own variant-specific setup/loop behavior.
+  What lives here
+  ---------------
+  1) Hardware and layout constants
+  2) Shared data structures (for example, `PresetState`)
+  3) Global state declarations used across runtime code
+  4) Public function declarations for setup, loop, display, I2C, and EEPROM
+
+  How to use it
+  -------------
+  - Include this file from Nexus sketches that use shared runtime behavior.
+  - Keep declarations here and put implementation details in nexus-core.cpp.
+  - Most sketches should call `nexus_setup()` and `nexus_loop()`.
   ============================================================================
 */
 
@@ -49,13 +61,13 @@ void nexusDebugPrintf(const char* format, ...);
   #warning "Nexus prototype firmware is currently mapped for Arduino Nano Every"
 #endif
 
-#define ENCODER2_A     14   // Physical pin 4  = A0/D14
-#define ENCODER2_B     15   // Physical pin 5  = A1/D15
-#define ENCODER2_BTN   16   // Physical pin 6  = A2/D16
+#define ENCODER1_A     4   // Physical pin 4  = A0/D14
+#define ENCODER1_B     5   // Physical pin 5  = A1/D15
+#define ENCODER1_BTN   6   // Physical pin 6  = A2/D16
 
-#define ENCODER1_A     17   // Physical pin 7  = A3/D17
-#define ENCODER1_B     20   // Physical pin 10 = A6/D20 (skips SDA/SCL at 8,9)
-#define ENCODER1_BTN   21   // Physical pin 11 = A7/D21
+#define ENCODER2_A     7   // Physical pin 7  = A3/D17
+#define ENCODER2_B     10  // Physical pin 10 = A6/D20 (skips SDA/SCL at 8,9)
+#define ENCODER2_BTN   11  // Physical pin 11 = A7/D21
 
 // ============================================================================
 // I2C DEVICE ADDRESSES
@@ -68,7 +80,7 @@ void nexusDebugPrintf(const char* format, ...);
 #define OLED_WIDTH  128
 #define OLED_HEIGHT 64
 
-// 1.3" SH1106-class 128x64 modules commonly need a +2 X pixel shift when driven
+// 1.3" SH1106-class 128x64 modules commonly need a small X shift when driven
 // through SSD1306-compatible libraries.
 // Tune these if content appears misaligned.
 #define OLED_PIXEL_OFFSET_X       2
@@ -84,7 +96,8 @@ void nexusDebugPrintf(const char* format, ...);
 #define AUDITION_TIMEOUT_MS 3000
 #define EEPROM_SAVE_DELAY   1000
 
-// Magic byte stored after the preset region to detect first boot vs uninitialised EEPROM
+// Magic byte stored after the preset region to detect first boot vs uninitialised EEPROM.
+// We currently store 8 matrix bytes and reserve 4 bytes per slot for future metadata.
 #define EEPROM_PRESET_STRIDE  (MATRIX_BYTES + 4)          // 12 bytes per preset slot
 #define EEPROM_MAGIC_ADDR     (NUM_PRESETS * EEPROM_PRESET_STRIDE)  // byte 96
 #define EEPROM_MAGIC_VAL      0xAB
