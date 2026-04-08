@@ -28,20 +28,14 @@
   Shared hardware, display, EEPROM, and router runtime live in the bundled
   nexus-core Arduino library at ../libraries/nexus-core/.
   This file implements the base router interface.
+
+  NOTE:
+  Variant-specific behavior is intentionally deferred until nexus-core is
+  finalized. This sketch remains a thin wrapper around core runtime entry points.
   ============================================================================
 */
 
 #include <nexus-core.h>
-
-// ============================================================================
-// ROUTER-SPECIFIC DEFINITIONS
-// ============================================================================
-
-#define ENABLE_ROUTER_MODE 1
-
-// ============================================================================
-// MAIN ARDUINO FUNCTIONS
-// ============================================================================
 
 void setup() {
   nexus_setup();
