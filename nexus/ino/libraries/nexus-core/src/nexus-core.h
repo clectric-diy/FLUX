@@ -66,13 +66,13 @@ void nexusDebugPrintf(const char* format, ...);
 // PIN DEFINITIONS for ATMega4809 (and Arduino Nano Every)
 // ============================================================================
 
-#define ENCODER1_A     14  // D14 (Nano Every pin 4)
-#define ENCODER1_B     15  // D15 (Nano Every pin 5)
-#define ENCODER1_BTN   16  // D16 (Nano Every pin 6)
+#define ENCODER2_A     14  // D14 (Nano Every pin 4)
+#define ENCODER2_B     15  // D15 (Nano Every pin 5)
+#define ENCODER2_BTN   16  // D16 (Nano Every pin 6)
 
-#define ENCODER2_A     17  // D17 (Nano Every pin 7)
-#define ENCODER2_B     20  // D20 (Nano Every pin 10)
-#define ENCODER2_BTN   21  // D21 (Nano Every pin 11)
+#define ENCODER1_A     17  // D17 (Nano Every pin 7)
+#define ENCODER1_B     20  // D20 (Nano Every pin 10)
+#define ENCODER1_BTN   21  // D21 (Nano Every pin 11)
 
 // ============================================================================
 // ROUTING SWITCH SETTINGS (ADG2188)
@@ -205,7 +205,6 @@ public:
 // ============================================================================
 extern U8G2_SH1106_128X64_NONAME_F_HW_I2C display;
 extern Patch activePatch;
-extern Patch presetPatches[NUM_PRESETS];
 extern byte currentPresetIndex;
 
 extern UIMode uiMode;
@@ -227,9 +226,6 @@ extern unsigned long lastMemorySaveTime;
 // ============================================================================
 // CORE FUNCTION DECLARATIONS
 // ============================================================================
-Patch& presetPatchAt(byte idx);
-void loadActivePatchFromPreset(byte idx);
-void saveActivePatchToPreset(byte idx);
 void nextPreset();
 void prevPreset();
 
@@ -239,7 +235,6 @@ void writeAuditToRoutingSwitch(byte col, byte row);
 void writeToSwitch(byte address, byte data);
 void writeSwitchRegister(byte address, byte registerIndex, byte data);
 
-void savePresetToMemory(byte presetIndex);
 void loadPresetFromMemory(byte presetIndex);
 void saveActivePatchToMemory();
 void loadActivePatchFromMemory();
@@ -248,8 +243,6 @@ void updateDisplay();
 void renderRoutingMode();
 void renderMenuMode();
 void renderMatrixBox(byte x, byte y);
-
-void printDebugStatus();
 
 // ============================================================================
 // ROUTER RUNTIME ENTRY POINTS

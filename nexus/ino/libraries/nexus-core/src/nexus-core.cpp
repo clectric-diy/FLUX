@@ -9,7 +9,7 @@
 
   What lives here
   ---------------
-  1) Runtime state definitions declared in nexus-core.h
+  1) Runtime variable definitions declared in nexus-core.h
   2) Input handling (encoders and buttons)
   3) Display rendering for routing and menu screens
   4) Routing switch writes over I2C (ADG2188)
@@ -26,6 +26,7 @@
 
 #include "nexus-core.h"
 
+// Small helper so we can keep printf-style debug logs in one place.
 void nexusDebugPrintf(const char* format, ...) {
   char buffer[96];
   va_list args;
@@ -39,9 +40,11 @@ U8G2_SH1106_128X64_NONAME_F_HW_I2C display(U8G2_R0, U8X8_PIN_NONE);
 
 namespace {
 
+// Some SH1106-compatible displays answer at 0x3D instead of 0x3C.
 byte detectedOledAddress = OLED_I2C_ADDR;
 constexpr uint32_t I2C_CLOCK_HZ = 100000;
 
+// Converts numeric debug level into a readable label for startup logs.
 const __FlashStringHelper* getDebugLevelName() {
 #if SERIAL_DEBUG_LEVEL == 0
   return F("OFF");
@@ -56,11 +59,13 @@ const __FlashStringHelper* getDebugLevelName() {
 #endif
 }
 
+// Quick I2C probe: returns true when a device acknowledges this address.
 bool i2cDevicePresent(byte address) {
   Wire.beginTransmission(address);
   return (Wire.endTransmission() == 0);
 }
 
+// Probes common SH1106 addresses and returns the detected OLED I2C address.
 byte detectOledAddress() {
   if (i2cDevicePresent(0x3C)) {
     return 0x3C;
@@ -72,10 +77,13 @@ byte detectOledAddress() {
 }
 
 enum FillMode : uint8_t {
+  // 25% stipple keeps inactive cells visible without looking "on".
   FILL_25,
+  // 100% fill marks an active connection clearly.
   FILL_100,
 };
 
+// Small formatting helper for OLED text output.
 void printFormattedToDisplay(const char* format, ...) {
   char buffer[32];
   va_list args;
@@ -85,18 +93,22 @@ void printFormattedToDisplay(const char* format, ...) {
   display.print(buffer);
 }
 
+// Converts matrix coordinates to a human-friendly label (for example A:1).
 void formatCursorPosition(char* out, size_t outLen, byte x, byte y) {
   snprintf(out, outLen, "%c:%d", 'A' + x, y + 1);
 }
 
+// Applies display X offset for SH1106-style frame buffer alignment.
 int16_t oledX(int16_t x) {
   return x + OLED_PIXEL_X_OFFSET;
 }
 
+// Applies display Y offset for SH1106-style frame buffer alignment.
 int16_t oledY(int16_t y) {
   return y + OLED_PIXEL_Y_OFFSET;
 }
 
+// Draws either a fully filled or stippled rectangle for one matrix cell.
 void drawStippleRect(int16_t x, int16_t y, int16_t w, int16_t h, FillMode mode) {
   if (mode == FILL_100) {
     display.drawBox(x, y, w, h);
@@ -110,7 +122,7 @@ void drawStippleRect(int16_t x, int16_t y, int16_t w, int16_t h, FillMode mode) 
       bool on = false;
 
       if (mode == FILL_25) {
-        on = ((gx & 1) == 0) && ((gy & 1) == 0);  // 1/4 pixels on
+        on = ((gx & 1) == 0) && ((gy & 1) == 0);  // Checker pattern: ~25% of pixels on
       }
 
       if (on) {
@@ -122,8 +134,8 @@ void drawStippleRect(int16_t x, int16_t y, int16_t w, int16_t h, FillMode mode) 
 
 } // namespace
 
+// Active patch = current full routing setup the user is editing/hearing.
 Patch activePatch;
-Patch presetPatches[NUM_PRESETS];
 byte currentPresetIndex = 0;
 
 UIMode uiMode = ROUTING_MODE;
@@ -144,10 +156,13 @@ unsigned long lastMemorySaveTime = 0;
 
 namespace {
 
-constexpr unsigned long BUTTON_DEBOUNCE_MS = 12;
+constexpr unsigned long BUTTON_DEBOUNCE_MS = 50;
 constexpr unsigned long BUTTON_LONG_PRESS_MS = 3000;
+// EC11 encoders produce 2 quadrature state changes per physical detent click.
+constexpr int8_t ENCODER_TICKS_PER_DETENT = 2;
 
 struct DebouncedButton {
+  // Navigation button moves/selects. Action button toggles/changes mode.
   enum Role : uint8_t {
     NAVIGATION_BUTTON,
     ACTION_BUTTON,
@@ -162,6 +177,7 @@ struct DebouncedButton {
   unsigned long pressStartMs;
   bool longHandled;
 
+  // Initializes one debounced button state block.
   void begin(uint8_t buttonPin, const char* buttonName, Role buttonRole) {
     pin = buttonPin;
     name = buttonName;
@@ -177,6 +193,7 @@ struct DebouncedButton {
 DebouncedButton encoder1Button;
 DebouncedButton encoder2Button;
 
+// Applies preset movement one step at a time so wrap behavior stays consistent.
 void movePresetSelectionBySteps(int8_t delta) {
   while (delta > 0) {
     nextPreset();
@@ -189,14 +206,17 @@ void movePresetSelectionBySteps(int8_t delta) {
   }
 }
 
+// In menu mode, encoder 1 scrolls presets.
 void routerHandleMenuEncoder1(int8_t delta) {
   movePresetSelectionBySteps(delta);
 }
 
+// In menu mode, encoder 2 mirrors preset scrolling for convenience.
 void routerHandleMenuEncoder2(int8_t delta) {
   routerHandleMenuEncoder1(delta);
 }
 
+// Starts a temporary audition preview at the current cursor position.
 void startAuditioning(byte x, byte y) {
   auditingX = x;
   auditingY = y;
@@ -214,6 +234,7 @@ void startAuditioning(byte x, byte y) {
   flagDisplayUpdate = true;
 }
 
+// Stops audition preview and restores the full active patch.
 void stopAuditioning() {
   isAuditioning = false;
   auditingX = 0;
@@ -224,6 +245,7 @@ void stopAuditioning() {
   flagDisplayUpdate = true;
 }
 
+// Logs one connection value and its containing row byte for debug tracing.
 void logSelectionState(byte x, byte y) {
   char pos[8];
   formatCursorPosition(pos, sizeof(pos), x, y);
@@ -231,6 +253,7 @@ void logSelectionState(byte x, byte y) {
   DEBUG_PRINTF("[SELECT] %s = %d (Row %d: 0x%02X)\n", pos, isConnected, y, activePatch.patchConnections[y]);
 }
 
+// Verbose-only pin tracing to debug encoder hardware behavior.
 void traceEncoderPins() {
 #if SERIAL_DEBUG_LEVEL >= 3
   static bool initialized = false;
@@ -271,18 +294,34 @@ void traceEncoderPins() {
 #endif
 }
 
-void handleActionButtonShortPress() {
+// Toggles the currently selected connection in the active patch.
+void toggleSelectedConnection() {
   if (uiMode != ROUTING_MODE) {
+    DEBUG_PRINTLN(F("[CLICK] Ignored (not in ROUTING_MODE)"));
     return;
   }
 
   activePatch.togglePatchConnection(cursorY, cursorX);
   flagSaveNeeded = true;
   flagDisplayUpdate = true;
+  DEBUG_PRINTF("[CLICK] Toggled selected connection at %c:%d\n", 'A' + cursorX, cursorY + 1);
   logSelectionState(cursorX, cursorY);
   writeActivePatchToRoutingSwitches();
 }
 
+// Handles short press on the action button.
+void handleActionButtonShortPress() {
+  DEBUG_PRINTLN(F("[CLICK] BTN2 short press"));
+  toggleSelectedConnection();
+}
+
+// Handles short press on the navigation encoder button.
+void handleNavigationButtonShortPress() {
+  DEBUG_PRINTLN(F("[CLICK] BTN1 short press"));
+  toggleSelectedConnection();
+}
+
+// Debounces one button and fires click or long-press actions on state change.
 void updateButton(DebouncedButton& button, unsigned long now) {
   bool reading = digitalRead(button.pin);
 
@@ -300,19 +339,25 @@ void updateButton(DebouncedButton& button, unsigned long now) {
     button.stableState = button.rawState;
 
     if (button.stableState == LOW) {
+      // Button pressed — record when it went down for long-press timing.
       button.pressStartMs = now;
       button.longHandled = false;
       DEBUG_VERBOSE_PRINTF("[%s] Pressed\n", button.name);
     } else {
+      // Button released — fire short-click if a long-press did not already handle it.
       unsigned long pressDuration = now - button.pressStartMs;
       DEBUG_VERBOSE_PRINTF("[%s] Released after %lu ms\n", button.name, pressDuration);
 
       if (!button.longHandled) {
-        DEBUG_VERBOSE_PRINTF("[%s] Click\n", button.name);
-      }
+        DEBUG_PRINTF("[CLICK] %s\n", button.name);
 
-      if (button.role == DebouncedButton::ACTION_BUTTON && !button.longHandled) {
-        handleActionButtonShortPress();
+        if (button.role == DebouncedButton::ACTION_BUTTON) {
+          handleActionButtonShortPress();
+        }
+
+        if (button.role == DebouncedButton::NAVIGATION_BUTTON) {
+          handleNavigationButtonShortPress();
+        }
       }
     }
   }
@@ -327,6 +372,7 @@ void updateButton(DebouncedButton& button, unsigned long now) {
   }
 }
 
+// Keeps the audition preview active while the cursor remains on the audition cell.
 void updateMatrixAuditioning() {
   if (!isAuditioning) {
     return;
@@ -340,6 +386,7 @@ void updateMatrixAuditioning() {
   }
 }
 
+// Toggles UI mode between routing view and preset menu.
 void handleModeChange() {
   if (uiMode == ROUTING_MODE) {
     uiMode = MENU_MODE;
@@ -353,6 +400,7 @@ void handleModeChange() {
   flagDisplayUpdate = true;
 }
 
+// Polls and debounces both encoder push buttons.
 void checkEncoderButtons() {
   unsigned long now = millis();
 
@@ -360,26 +408,52 @@ void checkEncoderButtons() {
   updateButton(encoder2Button, now);
 }
 
+// Quadrature state machine table.
+// Rows = previous 2-bit state (A<<1|B). Columns = new 2-bit state.
+// +1 = valid CW step, -1 = valid CCW step, 0 = no movement or invalid.
+static const int8_t ENCODER_STATE_TABLE[4][4] = {
+  { 0, -1, +1,  0 },  // prev 00
+  { +1,  0,  0, -1 },  // prev 01
+  { -1,  0,  0, +1 },  // prev 10
+  { 0, +1, -1,  0 },  // prev 11
+};
+
+// Interrupt handler for encoder 1 — uses quadrature state machine to reject noise.
 void isr_encoder1Tick() {
-  if (digitalRead(ENCODER1_A) != digitalRead(ENCODER1_B)) {
-    encoder1Delta++;
-  } else {
-    encoder1Delta--;
-  }
+  static uint8_t lastState = 0;
+  uint8_t newState = (digitalRead(ENCODER1_A) << 1) | digitalRead(ENCODER1_B);
+  encoder1Delta += ENCODER_STATE_TABLE[lastState][newState];
+  lastState = newState;
 }
 
+// Interrupt handler for encoder 2 — uses quadrature state machine to reject noise.
 void isr_encoder2Tick() {
-  if (digitalRead(ENCODER2_A) != digitalRead(ENCODER2_B)) {
-    encoder2Delta--;
-  } else {
-    encoder2Delta++;
-  }
+  static uint8_t lastState = 0;
+  uint8_t newState = (digitalRead(ENCODER2_A) << 1) | digitalRead(ENCODER2_B);
+  encoder2Delta += ENCODER_STATE_TABLE[lastState][newState];
+  lastState = newState;
 }
 
+// Processes encoder movement and button events for routing/menu modes.
 void processEncoderInput() {
   traceEncoderPins();
 
-  int8_t horizontalDelta = encoder1Delta;
+  // Convert raw encoder ticks into one UI step per physical detent.
+  static int8_t encoder1TickAccumulator = 0;
+  static int8_t encoder2TickAccumulator = 0;
+
+  noInterrupts();
+  int8_t rawEncoder1Ticks = encoder1Delta;
+  int8_t rawEncoder2Ticks = encoder2Delta;
+  encoder1Delta = 0;
+  encoder2Delta = 0;
+  interrupts();
+
+  encoder1TickAccumulator += rawEncoder1Ticks;
+  encoder2TickAccumulator += rawEncoder2Ticks;
+
+  int8_t horizontalDelta = encoder1TickAccumulator / ENCODER_TICKS_PER_DETENT;
+  encoder1TickAccumulator %= ENCODER_TICKS_PER_DETENT;
   if (horizontalDelta != 0) {
     if (uiMode == ROUTING_MODE) {
       int newX = constrain((int) cursorX + horizontalDelta, 0, MATRIX_SIZE - 1);
@@ -391,11 +465,10 @@ void processEncoderInput() {
     } else {
       routerHandleMenuEncoder1(horizontalDelta);
     }
-
-    encoder1Delta = 0;
   }
 
-  int8_t verticalDelta = encoder2Delta;
+  int8_t verticalDelta = encoder2TickAccumulator / ENCODER_TICKS_PER_DETENT;
+  encoder2TickAccumulator %= ENCODER_TICKS_PER_DETENT;
   if (verticalDelta != 0) {
     if (uiMode == ROUTING_MODE) {
       int newY = constrain((int) cursorY + verticalDelta, 0, MATRIX_SIZE - 1);
@@ -407,13 +480,12 @@ void processEncoderInput() {
     } else {
       routerHandleMenuEncoder2(verticalDelta);
     }
-
-    encoder2Delta = 0;
   }
 
   checkEncoderButtons();
 }
 
+// Initializes the OLED and displays a brief startup message.
 void initializeDisplay(const __FlashStringHelper* title) {
   detectedOledAddress = detectOledAddress();
   display.setI2CAddress(detectedOledAddress << 1);
@@ -434,26 +506,7 @@ void initializeDisplay(const __FlashStringHelper* title) {
 
 } // namespace
 
-Patch& presetPatchAt(byte idx) {
-  if (idx >= NUM_PRESETS) {
-    idx = 0;
-  }
-  return presetPatches[idx];
-}
-
-void loadActivePatchFromPreset(byte idx) {
-  activePatch = presetPatchAt(idx);
-  currentPresetIndex = idx;
-  DEBUG_PRINTF("[PRESET] Loaded preset %d\n", idx);
-}
-
-void saveActivePatchToPreset(byte idx) {
-  presetPatchAt(idx) = activePatch;
-  currentPresetIndex = idx;
-  savePresetToMemory(idx);
-  DEBUG_PRINTF("[PRESET] Saved active to preset %d\n", idx);
-}
-
+// Select next preset slot and load its patch from memory.
 void nextPreset() {
   currentPresetIndex = (currentPresetIndex + 1) % NUM_PRESETS;
   loadPresetFromMemory(currentPresetIndex);
@@ -461,6 +514,7 @@ void nextPreset() {
   flagDisplayUpdate = true;
 }
 
+// Select previous preset slot and load its patch from memory.
 void prevPreset() {
   if (currentPresetIndex == 0) {
     currentPresetIndex = NUM_PRESETS - 1;
@@ -473,6 +527,7 @@ void prevPreset() {
   flagDisplayUpdate = true;
 }
 
+// Resets all three ADG2188 switch chips to a known blank startup state.
 void initializeRoutingSwitches() {
   DEBUG_PRINTLN(F("[I2C] Initializing routing switches (ADG2188)..."));
 
@@ -486,6 +541,7 @@ void initializeRoutingSwitches() {
   DEBUG_PRINTLN(F("[I2C] Routing switch initialization complete (ADG2188)"));
 }
 
+// Writes the full active patch into the routing switch registers.
 void writeActivePatchToRoutingSwitches() {
   for (int row = 0; row < MATRIX_BYTES; row++) {
     writeSwitchRegister(ROUTING_SWITCH_I2C_ADDR, row, activePatch.patchConnections[row]);
@@ -494,6 +550,7 @@ void writeActivePatchToRoutingSwitches() {
   DEBUG_PRINTLN(F("[I2C] Active patch written to routing switches (ADG2188)"));
 }
 
+// Writes a temporary preview connection for one register during audition.
 void writeAuditToRoutingSwitch(byte col, byte row) {
   if (row >= MATRIX_SIZE || col >= MATRIX_SIZE) {
     return;
@@ -503,12 +560,14 @@ void writeAuditToRoutingSwitch(byte col, byte row) {
   writeSwitchRegister(ROUTING_SWITCH_I2C_ADDR, row, auditRow);
 }
 
+// Single-byte write helper for simple switch commands.
 void writeToSwitch(byte address, byte data) {
   Wire.beginTransmission(address);
   Wire.write(data);
   Wire.endTransmission();
 }
 
+// Writes one addressed register value to an ADG2188 switch chip.
 void writeSwitchRegister(byte address, byte registerIndex, byte data) {
   Wire.beginTransmission(address);
   Wire.write(registerIndex);
@@ -516,42 +575,26 @@ void writeSwitchRegister(byte address, byte registerIndex, byte data) {
   Wire.endTransmission();
 }
 
-void savePresetToMemory(byte presetIndex) {
-  if (presetIndex >= NUM_PRESETS) {
-    return;
-  }
-
-  uint16_t memoryAddress = MEMORY_PRESET_BASE_ADDR + (presetIndex * MEMORY_PRESET_STRIDE);
-
-  for (int index = 0; index < MATRIX_BYTES; index++) {
-    EEPROM.update(memoryAddress + index, activePatch.patchConnections[index]);
-  }
-
-  // Write the initialization marker so future loads know the data is valid.
-  EEPROM.update(MEMORY_INIT_MARKER_ADDR, MEMORY_INIT_MARKER_VAL);
-
-  DEBUG_PRINTF("[MEMORY] Preset %d saved\n", presetIndex);
-  lastMemorySaveTime = millis();
-}
-
+// Saves the current active patch to memory.
 void saveActivePatchToMemory() {
   for (int index = 0; index < MATRIX_BYTES; index++) {
     EEPROM.update(MEMORY_ACTIVE_PATCH_ADDR + index, activePatch.patchConnections[index]);
   }
 
-  // Write the initialization marker so future loads know the data is valid.
+  // Initialization marker tells future boots that memory contains valid patch data.
   EEPROM.update(MEMORY_INIT_MARKER_ADDR, MEMORY_INIT_MARKER_VAL);
 
   DEBUG_PRINTLN(F("[MEMORY] Active patch saved"));
   lastMemorySaveTime = millis();
 }
 
+// Loads one preset patch from memory into the active patch.
 void loadPresetFromMemory(byte presetIndex) {
   if (presetIndex >= NUM_PRESETS) {
     return;
   }
 
-  // If memory has never been written, default to blank rather than loading garbage
+  // If memory is uninitialized, use a blank patch instead of random bytes.
   if (EEPROM.read(MEMORY_INIT_MARKER_ADDR) != MEMORY_INIT_MARKER_VAL) {
     DEBUG_PRINTLN(F("[MEMORY] No valid data - defaulting to blank"));
     activePatch.clear();
@@ -574,8 +617,8 @@ void loadPresetFromMemory(byte presetIndex) {
   flagDisplayUpdate = true;
 }
 
+// Restores the last active patch from memory on startup.
 void loadActivePatchFromMemory() {
-  // If memory has never been written, default to blank rather than loading garbage.
   if (EEPROM.read(MEMORY_INIT_MARKER_ADDR) != MEMORY_INIT_MARKER_VAL) {
     DEBUG_PRINTLN(F("[MEMORY] No valid active patch - defaulting to blank"));
     activePatch.clear();
@@ -593,6 +636,7 @@ void loadActivePatchFromMemory() {
   flagDisplayUpdate = true;
 }
 
+// Render the current UI mode and flush the frame to the OLED.
 void updateDisplay() {
   display.clearBuffer();
 
@@ -605,6 +649,7 @@ void updateDisplay() {
   display.sendBuffer();
 }
 
+// Draw the routing grid and right-side status labels.
 void renderRoutingMode() {
   for (int y = 0; y < MATRIX_SIZE; y++) {
     for (int x = 0; x < MATRIX_SIZE; x++) {
@@ -615,18 +660,18 @@ void renderRoutingMode() {
   uint16_t statusX = GRID_START_X + GRID_PIXEL_SIZE + 3;
   display.setFont(u8g2_font_5x8_tr);
   display.setCursor(oledX(statusX), oledY(0));
+  display.println(F("POS"));
 
   char label[8];
   formatCursorPosition(label, sizeof(label), cursorX, cursorY);
-  display.println(label);
-
   display.setCursor(oledX(statusX), oledY(10));
-  printFormattedToDisplay("P:%d", currentPresetIndex + 1);
+  display.println(label);
 
   display.setCursor(oledX(statusX), oledY(20));
   display.println(isAuditioning ? F("AUD") : F("   "));
 }
 
+// Draws one matrix cell using fill + cursor-outline rules.
 void renderMatrixBox(byte x, byte y) {
   uint16_t boxX = oledX(GRID_START_X + (x * (BOX_SIZE + BOX_SPACING)));
   uint16_t boxY = oledY(GRID_START_Y + (y * (BOX_SIZE + BOX_SPACING)));
@@ -634,10 +679,10 @@ void renderMatrixBox(byte x, byte y) {
   const bool isSelected = activePatch.isPatchConnectionActive(y, x);
   const bool isCursorCell = (cursorX == x) && (cursorY == y);
 
-  // Keep state visibility stable while moving cursor:
+  // Keep connection visibility stable while moving cursor:
   // - unselected: 25% stipple
   // - selected: 100% fill
-  // - cursor: outline only (does not change fill state)
+  // - cursor: outline only (does not change fill)
   FillMode mode = isSelected ? FILL_100 : FILL_25;
 
   drawStippleRect(boxX, boxY, BOX_SIZE, BOX_SIZE, mode);
@@ -648,6 +693,7 @@ void renderMatrixBox(byte x, byte y) {
   }
 }
 
+// Draws the preset-selection menu screen.
 void renderMenuMode() {
   display.setFont(u8g2_font_5x8_tr);
   display.setCursor(oledX(0), oledY(0));
@@ -658,24 +704,7 @@ void renderMenuMode() {
   display.println(F("Hold BTN2 to exit menu"));
 }
 
-void printDebugStatus() {
-  if (!SERIAL_DEBUG_ENABLED) {
-    return;
-  }
-
-  DEBUG_PRINTLN(F("\n=== SYSTEM STATUS ==="));
-  DEBUG_PRINTF("UI Mode: %s\n", (uiMode == ROUTING_MODE) ? "ROUTING" : "MENU");
-  DEBUG_PRINTF("Cursor: X=%d Y=%d\n", cursorX, cursorY);
-  DEBUG_PRINTF("Audition: %s (X=%d Y=%d)\n", isAuditioning ? "ON" : "OFF", auditingX, auditingY);
-  DEBUG_PRINTF("Preset: %d\n", currentPresetIndex);
-
-  DEBUG_PRINT(F("Connections by row: "));
-  for (int index = 0; index < MATRIX_BYTES; index++) {
-    DEBUG_PRINTF("0x%02X ", activePatch.patchConnections[index]);
-  }
-  DEBUG_PRINTLN();
-}
-
+// One-time hardware/runtime initialization.
 void nexus_setup() {
   if (SERIAL_DEBUG_ENABLED) {
     Serial.begin(SERIAL_BAUD);
@@ -713,8 +742,11 @@ void nexus_setup() {
   encoder1Button.begin(ENCODER1_BTN, "BTN1", DebouncedButton::NAVIGATION_BUTTON);
   encoder2Button.begin(ENCODER2_BTN, "BTN2", DebouncedButton::ACTION_BUTTON);
 
+  // Attach interrupts on both A and B pins so the state machine sees every edge.
   attachInterrupt(digitalPinToInterrupt(ENCODER1_A), isr_encoder1Tick, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(ENCODER1_B), isr_encoder1Tick, CHANGE);
   attachInterrupt(digitalPinToInterrupt(ENCODER2_A), isr_encoder2Tick, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(ENCODER2_B), isr_encoder2Tick, CHANGE);
 
   DEBUG_PRINTLN(F("[SETUP] Encoder interrupts attached"));
 
@@ -726,6 +758,7 @@ void nexus_setup() {
   DEBUG_PRINTLN(F("[SETUP] Initialization complete\n"));
 }
 
+// Main runtime loop: input, mode updates, audition timeout, autosave, redraw.
 void nexus_loop() {
   unsigned long now = millis();
 
@@ -746,6 +779,7 @@ void nexus_loop() {
   }
 
   if (flagSaveNeeded && (now - lastMemorySaveTime > MEMORY_SAVE_DELAY)) {
+    // Delay writes so rapid edits do not wear memory unnecessarily.
     flagSaveNeeded = false;
     saveActivePatchToMemory();
     DEBUG_PRINTF("[MEMORY] Saved at %lu ms\n", now);
