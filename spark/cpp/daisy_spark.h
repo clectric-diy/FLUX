@@ -4,15 +4,14 @@
 
 #include "daisy_seed.h"
 
-namespace spark
+namespace daisy_spark
 {
-using namespace daisy;
-
+    using namespace daisy;
 /**
-    @brief Class that handles initializing all of the hardware specific to the Daisy Patch Board. \n
+    @brief Class that handles initializing all of the hardware specific to the Spark Module. \n
     Helper funtions are also in place to provide easy access to built-in controls and peripherals.
-    @author Stephen Hensley
-    @date November 2019
+    @author Charles H. Leggett
+    @date April 2026
     @ingroup boards
 */
 class Spark
@@ -141,5 +140,5 @@ class Spark
     void InitMidi();
 };
 
-} // namespace spark
+} // namespace daisy_spark
 #endif

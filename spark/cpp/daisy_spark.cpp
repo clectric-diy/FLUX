@@ -5,7 +5,7 @@
 #define SAMPLE_RATE 48014.f
 #endif
 
-using namespace spark;
+using namespace daisy_spark;
 
 // # Rev3 and Rev4 with newest pinout.
 // Compatible with Seed Rev3 and Rev4
