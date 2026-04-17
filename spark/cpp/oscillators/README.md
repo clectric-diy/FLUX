@@ -30,3 +30,6 @@ In any collection, click the encoder and then turn to select different collectio
 ### TBD (Blue)
 ### TBD (Purple)
 ### TBD (Red)
+
+## Attribution
+Based on the DaisyExamples code written for the Daisy Pod by Stephen Hensley in 2019 and licensed under the MIT License agreement.
