@@ -69,9 +69,6 @@ constexpr Pin KNOB_2_PIN = seed::D15;
 #endif
 */
 
-
-using namespace spark;
-
 void Spark::Init(bool boost)
 {
     // Set Some numbers up for accessors.
