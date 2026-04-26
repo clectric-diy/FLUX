@@ -1,15 +1,13 @@
-# FLUX
-
 **FLUX** are firmware programs written for the clectric (or compatible) hardware modules. FLUX define how the module behaves as an oscillator, filter, sequencer, texture generator, or something brand new.
 
 Each FLUX is a self-contained firmware project with:
 - A unique behavior or purpose
 - Documentation, controls, and patch examples
 
-## Modules
+## Modules & Firmware
+- The [Spark](https://clectric.diy/Spark-AE/) is a rackable clone of the Electrosmith Daisy Pod; various firmware and runtimes are available here: [spark/README.md](https://github.com/clectric-diy/FLUX/tree/main/spark)
 
-- **Nexus** — Arduino-based firmware for the 8×8 analog switch matrix; start in `nexus/README.md`
-- **Spark** — Daisy Seed-based firmware and supporting runtimes; start in `spark/README.md`
+- The [Nexus](https://clectric.diy/Nexus-AE/) is a, Microchip ATmega4809 (Arduino) based, 8×8 analog crosspoint switch; various firmware and runtimes are available here [nexus/README.md](https://github.com/clectric-diy/FLUX/tree/main/nexus)
 
 ## FLUX Header Comment
 Including a good header comment such as the following example will help everyone to understand your FLUX.
