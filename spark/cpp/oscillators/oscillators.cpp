@@ -557,6 +557,11 @@ static void DebugInit()
              "spark debug on: level=%d mask=0x%02x",
              diagnostics.Level(),
              diagnostics.Mask());
+#if SPARK_ENCODER_CLICK_WORKAROUND
+    DebugLog(DBG_INFO,
+             DBG_CAT_STATE,
+             "bank select: hold sw2 while turning encoder");
+#endif
 
     // I2C scan is printed later (after USB CDC attach) from the main loop.
 #endif
@@ -712,9 +717,10 @@ void ProcessEncoder()
                 current.waveform = WrapIndex(current.waveform + static_cast<int>(inc), WAVE_COUNT);
                 diagnostics.Log(DBG_INFO,
                                 DBG_CAT_CTRL,
-                                "%swave -> %d",
+                                "%swave -> %d (%s)",
                                 encLabel,
-                                current.waveform);
+                                current.waveform,
+                                WaveName(current.waveform));
                 DebugStatusNow("wave");
             }
             else if(current.sparkMode == MODE_MACRO_A)
@@ -722,9 +728,10 @@ void ProcessEncoder()
                 current.macroA = WrapIndex(current.macroA + static_cast<int>(inc), MACRO_A_COUNT);
                 diagnostics.Log(DBG_INFO,
                                 DBG_CAT_CTRL,
-                                "%smacroA -> %d",
+                                "%smacroA -> %d (%s)",
                                 encLabel,
-                                current.macroA);
+                                current.macroA,
+                                MacroAName(current.macroA));
                 DebugStatusNow("macroA");
             }
             else
@@ -732,9 +739,10 @@ void ProcessEncoder()
                 current.macroB = WrapIndex(current.macroB + static_cast<int>(inc), MACRO_B_COUNT);
                 diagnostics.Log(DBG_INFO,
                                 DBG_CAT_CTRL,
-                                "%smacroB -> %d",
+                                "%smacroB -> %d (%s)",
                                 encLabel,
-                                current.macroB);
+                                current.macroB,
+                                MacroBName(current.macroB));
                 DebugStatusNow("macroB");
             }
         }
