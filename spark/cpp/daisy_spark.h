@@ -35,6 +35,20 @@ enum DebugCategoryMask : uint8_t
 class Spark
 {
   public:
+    struct LedCalibration
+    {
+        float global_gain = 1.0f;
+        float red_gain    = 1.0f;
+        float green_gain  = 1.0f;
+        float blue_gain   = 1.0f;
+        float gamma       = 1.0f;
+    };
+
+    enum class LedTarget : uint8_t
+    {
+        Onboard = 0,
+        Encoder = 1,
+    };
     /** Switches */
     enum Sw
     {
@@ -130,11 +144,33 @@ class Spark
     /** Process digital controls */
     void ProcessDigitalControls();
 
+    /** Initialize I2C bus for onboard peripheral discovery/control. */
+    bool InitPeripheralI2c();
+
+    /** Scan 7-bit I2C addresses and return number of responsive devices. */
+    uint8_t ScanI2cDevices(uint8_t* out_addresses,
+                           uint8_t  max_addresses,
+                           uint8_t  start_addr = 0x08,
+                           uint8_t  end_addr   = 0x77,
+                           uint32_t timeout_ms = 2);
+
     /** Reset Leds*/
     void ClearLeds();
 
     /** Update Leds to set colors*/
     void UpdateLeds();
+
+    /** Set per-target LED calibration parameters. */
+    void SetLedCalibration(LedTarget target, const LedCalibration& calibration);
+
+    /** Apply per-target LED calibration to an RGB triplet. */
+    void ApplyLedCalibration(LedTarget target,
+                             float     in_r,
+                             float     in_g,
+                             float     in_b,
+                             float&    out_r,
+                             float&    out_g,
+                             float&    out_b) const;
 
     /** Public Members */
     DaisySeed     seed;        /**<# */
@@ -148,6 +184,8 @@ class Spark
     RgbLed led1,               /**< & */
         led2;                  /**< & */
     MidiUartHandler midi;
+    I2CHandle       peripheral_i2c;
+    bool            peripheral_i2c_ready_ = false;
 
   private:
     void SetHidUpdateRates();
@@ -156,6 +194,11 @@ class Spark
     void InitLeds();
     void InitKnobs();
     void InitMidi();
+    static float Clamp01(float v);
+    static float ApplyGamma(float v, float gamma);
+
+    LedCalibration onboard_led_calibration_;
+    LedCalibration encoder_led_calibration_;
 };
 
 /** Shared diagnostics helper for Spark firmware variants (oscillators/effects/filters). */
@@ -177,6 +220,17 @@ class SparkDiagnostics
                        bool        encoder_pressed,
                        bool        button1_pressed,
                        bool        button2_pressed);
+    void RefreshStatusLine(const char* mode_name,
+                           int         primary_index,
+                           int         secondary_a,
+                           int         secondary_b,
+                           float       frequency_hz,
+                           float       knob1_value,
+                           float       knob2_value,
+                           bool        encoder_pressed,
+                           bool        button1_pressed,
+                           bool        button2_pressed);
+    void LogHeartbeat(const char* firmware_name, uint32_t interval_ms = 1000);
     bool StatusDue(uint32_t interval_ms);
     void CycleLevel();
     void CycleSingleMask();
@@ -188,6 +242,7 @@ class SparkDiagnostics
     uint8_t   level_          = DBG_INFO;
     uint8_t   mask_           = DBG_CAT_CTRL | DBG_CAT_AUDIO | DBG_CAT_STATE | DBG_CAT_STORAGE;
     uint32_t  last_status_ms_ = 0;
+    uint32_t  last_heartbeat_ms_ = 0;
 };
 
 /** Shared main-loop helper for Spark firmware variants. */

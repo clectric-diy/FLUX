@@ -1,4 +1,5 @@
 #include "daisy_spark.h"
+#include <cmath>
 #include <cstdarg>
 #include <cstdio>
 
@@ -27,6 +28,10 @@ constexpr Pin LED_1_B_PIN    = seed::D18;
 constexpr Pin LED_2_R_PIN    = seed::D17;
 constexpr Pin LED_2_G_PIN    = seed::D24;
 constexpr Pin LED_2_B_PIN    = seed::D23;
+
+// Spark peripheral I2C bus (matches Daisy Pod-style expansion bus pins).
+constexpr Pin PERIPH_I2C_SCL_PIN = seed::D12;
+constexpr Pin PERIPH_I2C_SDA_PIN = seed::D11;
 
 void Spark::Init(bool boost)
 {
@@ -139,6 +144,49 @@ void Spark::ProcessDigitalControls()
     button2.Debounce();
 }
 
+bool Spark::InitPeripheralI2c()
+{
+    if(peripheral_i2c_ready_)
+    {
+        return true;
+    }
+
+    I2CHandle::Config i2c_cfg;
+    i2c_cfg.periph          = I2CHandle::Config::Peripheral::I2C_1;
+    i2c_cfg.mode            = I2CHandle::Config::Mode::I2C_MASTER;
+    i2c_cfg.speed           = I2CHandle::Config::Speed::I2C_100KHZ;
+    i2c_cfg.pin_config.scl  = PERIPH_I2C_SCL_PIN;
+    i2c_cfg.pin_config.sda  = PERIPH_I2C_SDA_PIN;
+
+    peripheral_i2c_ready_ = (peripheral_i2c.Init(i2c_cfg) == I2CHandle::Result::OK);
+    return peripheral_i2c_ready_;
+}
+
+uint8_t Spark::ScanI2cDevices(uint8_t* out_addresses,
+                              uint8_t  max_addresses,
+                              uint8_t  start_addr,
+                              uint8_t  end_addr,
+                              uint32_t timeout_ms)
+{
+    if(!peripheral_i2c_ready_ || out_addresses == nullptr || max_addresses == 0
+       || start_addr > end_addr)
+    {
+        return 0;
+    }
+
+    uint8_t found  = 0;
+    uint8_t rxByte = 0;
+    for(uint8_t addr = start_addr; addr <= end_addr && found < max_addresses; addr++)
+    {
+        if(peripheral_i2c.ReceiveBlocking(addr, &rxByte, 1, timeout_ms)
+           == I2CHandle::Result::OK)
+        {
+            out_addresses[found++] = addr;
+        }
+    }
+    return found;
+}
+
 void Spark::ClearLeds()
 {
     // Using Color
@@ -155,6 +203,51 @@ void Spark::UpdateLeds()
 {
     led1.Update();
     led2.Update();
+}
+
+void Spark::SetLedCalibration(LedTarget target, const LedCalibration& calibration)
+{
+    if(target == LedTarget::Encoder)
+    {
+        encoder_led_calibration_ = calibration;
+        return;
+    }
+    onboard_led_calibration_ = calibration;
+}
+
+void Spark::ApplyLedCalibration(LedTarget target,
+                                float     in_r,
+                                float     in_g,
+                                float     in_b,
+                                float&    out_r,
+                                float&    out_g,
+                                float&    out_b) const
+{
+    const LedCalibration& cal = (target == LedTarget::Encoder) ? encoder_led_calibration_
+                                                                : onboard_led_calibration_;
+    const float g             = (cal.gamma <= 0.0f) ? 1.0f : cal.gamma;
+
+    out_r = ApplyGamma(Clamp01(in_r * cal.red_gain * cal.global_gain), g);
+    out_g = ApplyGamma(Clamp01(in_g * cal.green_gain * cal.global_gain), g);
+    out_b = ApplyGamma(Clamp01(in_b * cal.blue_gain * cal.global_gain), g);
+}
+
+float Spark::Clamp01(float v)
+{
+    if(v < 0.0f)
+    {
+        return 0.0f;
+    }
+    if(v > 1.0f)
+    {
+        return 1.0f;
+    }
+    return v;
+}
+
+float Spark::ApplyGamma(float v, float gamma)
+{
+    return powf(Clamp01(v), gamma);
 }
 
 void Spark::InitButtons()
@@ -269,6 +362,58 @@ void SparkDiagnostics::LogStatusLine(const char* mode_name,
         encoder_pressed ? 1 : 0,
         button1_pressed ? 1 : 0,
         button2_pressed ? 1 : 0);
+}
+
+void SparkDiagnostics::RefreshStatusLine(const char* mode_name,
+                                         int         primary_index,
+                                         int         secondary_a,
+                                         int         secondary_b,
+                                         float       frequency_hz,
+                                         float       knob1_value,
+                                         float       knob2_value,
+                                         bool        encoder_pressed,
+                                         bool        button1_pressed,
+                                         bool        button2_pressed)
+{
+    // Keep this comfortably below LOGGER_BUFFER (128) to avoid "$$" overflow markers.
+    char line[96];
+    snprintf(line,
+             sizeof(line),
+             "mode=%s wf=%d a=%d b=%d f=%.1f k1=%.2f k2=%.2f e%d b%d%d",
+             mode_name,
+             primary_index,
+             secondary_a,
+             secondary_b,
+             frequency_hz,
+             knob1_value,
+             knob2_value,
+             encoder_pressed ? 1 : 0,
+             button1_pressed ? 1 : 0,
+             button2_pressed ? 1 : 0);
+
+    if(DBG_INFO > level_ || (mask_ & DBG_CAT_STATE) == 0)
+    {
+        return;
+    }
+    // Redraw the same console line without adding scrollback.
+    spark_.seed.Print("\r%-96s", line);
+}
+
+void SparkDiagnostics::LogHeartbeat(const char* firmware_name, uint32_t interval_ms)
+{
+    const uint32_t now = System::GetNow();
+    if(now - last_heartbeat_ms_ < interval_ms)
+    {
+        return;
+    }
+    last_heartbeat_ms_ = now;
+    Log(DBG_INFO,
+        DBG_CAT_STATE,
+        "heartbeat fw=%s t_ms=%lu level=%u mask=0x%02x",
+        firmware_name,
+        static_cast<unsigned long>(now),
+        static_cast<unsigned>(Level()),
+        static_cast<unsigned>(Mask()));
 }
 
 bool SparkDiagnostics::StatusDue(uint32_t interval_ms)
