@@ -143,6 +143,7 @@ static constexpr float kWaveWarmthBaseAlpha = 0.055f;
 static constexpr float kWaveWarmthTimbreAlphaSpan = 0.045f;
 static constexpr float kWaveWarmthDrive = 1.30f;
 static constexpr float kWaveWarmthWet = 0.35f;
+static constexpr float kWaveOutputGain = 0.78f;
 static float            modifierHarmonics = 0.0f;
 static float            modifierMorph = 0.0f;
 static uint32_t         sw2PressStartMs = 0;
@@ -202,6 +203,37 @@ static float ApplyWaveWarmth(float input, float timbre)
     waveWarmthState += alpha * (input - waveWarmthState);
     const float colored = ((1.0f - kWaveWarmthWet) * input) + (kWaveWarmthWet * waveWarmthState);
     return tanhf(colored * kWaveWarmthDrive);
+}
+
+static float CurrentModelOutputGain(const SparkSettings& current)
+{
+    if(current.sparkMode == MODE_WAVEFORMS)
+    {
+        return kWaveOutputGain;
+    }
+    if(current.sparkMode == MODE_MACRO_A)
+    {
+        switch(current.macroA)
+        {
+            case MACRO_A_VARIABLE_SAW: return 0.86f;
+            case MACRO_A_VARIABLE_SHAPE: return 0.86f;
+            case MACRO_A_FM2: return 0.72f;
+            case MACRO_A_FORMANT: return 0.82f;
+            case MACRO_A_HARMONIC: return 0.74f;
+            case MACRO_A_ZOSC: return 0.80f;
+            default: return 0.80f;
+        }
+    }
+    switch(current.macroB)
+    {
+        case MACRO_B_VOSIM: return 0.76f;
+        case MACRO_B_STRING: return 0.80f;
+        case MACRO_B_PARTICLE: return 0.72f;
+        case MACRO_B_RING_MOD_NOISE: return 0.72f;
+        case MACRO_B_OVERDRIVE: return 0.66f;
+        case MACRO_B_BASS_DRUM_CLICK: return 0.80f;
+        default: return 0.76f;
+    }
 }
 
 static const char* ModeName(int mode)
@@ -926,8 +958,9 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
             }
         }
 
-        out[0][i] = sig * 0.5f;
-        out[1][i] = sig * 0.5f;
+        const float modelGain = CurrentModelOutputGain(current);
+        out[0][i]             = sig * modelGain;
+        out[1][i]             = sig * modelGain;
     }
 }
 
