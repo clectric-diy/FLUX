@@ -27,6 +27,10 @@ static float      sampleRate          = 48000.0f;
 static float      drumPhase           = 0.0f;
 static bool       encoderTurnedWhilePressed = false;
 static bool       i2cScanPrinted            = false;
+static uint32_t   lastEncoderPressMs        = 0;
+static int        octaveShift               = 0;
+static float      lastKnob2ShapeLog         = -1.0f;
+static uint32_t   lastKnobFeedbackMs        = 0;
 static Spark::LedCalibration kOnboardLedCalibration = {
     0.45f, // global_gain
     1.00f, // red_gain
@@ -102,6 +106,46 @@ PersistentStorage<SparkSettings> storage(spark.seed.qspi);
 #define SPARK_DEBUG_STATUS_INTERVAL_MS 1000U
 #endif
 
+static constexpr float kMiddleC            = 261.63f;
+static constexpr int   kKnobSemitoneSpan   = 12;
+static constexpr int   kOctaveShiftMin     = -2;
+static constexpr int   kOctaveShiftMax     = 2;
+static constexpr uint32_t kBankSwitchGraceMs = 180;
+static constexpr uint32_t kKnobFeedbackIntervalMs = 120;
+static constexpr bool  kQuantizeToWesternSemitones = false;
+static constexpr float kKnob1Min = 0.00f;
+static constexpr float kKnob1Max = 0.96f;
+static constexpr float kKnob2Min = 0.00f;
+static constexpr float kKnob2Max = 0.96f;
+
+static float CalibrateKnob(float raw, float minv, float maxv)
+{
+    if(maxv <= minv)
+    {
+        return 0.0f;
+    }
+    float v = (raw - minv) / (maxv - minv);
+    if(v < 0.0f)
+    {
+        v = 0.0f;
+    }
+    if(v > 1.0f)
+    {
+        v = 1.0f;
+    }
+    return v;
+}
+
+static float Knob1Calibrated()
+{
+    return CalibrateKnob(spark.knob1.Value(), kKnob1Min, kKnob1Max);
+}
+
+static float Knob2Calibrated()
+{
+    return CalibrateKnob(spark.knob2.Value(), kKnob2Min, kKnob2Max);
+}
+
 static const char* ModeName(int mode)
 {
     switch(mode)
@@ -136,6 +180,49 @@ static RgbColor PaletteColor(int index)
 {
     const int paletteCount = static_cast<int>(sizeof(kRoygbivRedLast) / sizeof(kRoygbivRedLast[0]));
     return kRoygbivRedLast[WrapIndex(index, paletteCount)];
+}
+
+static void DebugStatusNow(const char* reason)
+{
+    SparkSettings& current = storage.GetSettings();
+    (void)reason;
+
+    // Force immediate single-line refresh without adding scrollback noise.
+    const float k1 = Knob1Calibrated();
+    const float k2 = Knob2Calibrated();
+    const bool  e  = spark.encoder.Pressed();
+    const bool  b1 = spark.button1.Pressed();
+    const bool  b2 = spark.button2.Pressed();
+
+    diagnostics.RefreshStatusLine(ModeName(current.sparkMode),
+                                  current.waveform,
+                                  current.macroA,
+                                  current.macroB,
+                                  current.waveformFreq,
+                                  k1,
+                                  k2,
+                                  e,
+                                  b1,
+                                  b2);
+}
+
+static void LogKnobFeedback(const char* source)
+{
+    const uint32_t now = System::GetNow();
+    if((now - lastKnobFeedbackMs) < kKnobFeedbackIntervalMs)
+    {
+        return;
+    }
+    lastKnobFeedbackMs = now;
+
+    SparkSettings& current = storage.GetSettings();
+    diagnostics.Log(DBG_INFO,
+                    DBG_CAT_CTRL,
+                    "%s freq=%dHz shape=%d%% oct=%d",
+                    source,
+                    static_cast<int>(current.waveformFreq),
+                    static_cast<int>(Knob2Calibrated() * 100.0f),
+                    octaveShift);
 }
 
 static void DebugLog(uint8_t level, uint8_t category, const char* format, ...)
@@ -218,8 +305,8 @@ static void DebugMaybeStatus()
                                   current.macroA,
                                   current.macroB,
                                   current.waveformFreq,
-                                  spark.knob1.Value(),
-                                  spark.knob2.Value(),
+                                  Knob1Calibrated(),
+                                  Knob2Calibrated(),
                                   spark.encoder.Pressed(),
                                   spark.button1.Pressed(),
                                   spark.button2.Pressed());
@@ -272,19 +359,42 @@ void ProcessEncoder()
 {
     SparkSettings& current = storage.GetSettings();
     const int32_t  inc     = spark.encoder.Increment();
+    const uint32_t nowMs   = System::GetNow();
 
     if(spark.encoder.RisingEdge())
     {
         encoderTurnedWhilePressed = false;
+        lastEncoderPressMs        = nowMs;
+        DebugLog(DBG_TRACE, DBG_CAT_CTRL, "encoder press");
+        DebugStatusNow("enc-press");
+    }
+
+    if(spark.encoder.FallingEdge())
+    {
+        DebugLog(DBG_TRACE, DBG_CAT_CTRL, "encoder release");
+        DebugStatusNow("enc-release");
     }
 
     if(inc != 0)
     {
-        if(spark.encoder.Pressed())
+        // Be tolerant of slight timing jitter between click and first detent.
+        const bool bankSelectActive
+            = spark.encoder.Pressed() || ((nowMs - lastEncoderPressMs) <= kBankSwitchGraceMs);
+        DebugLog(DBG_TRACE,
+                 DBG_CAT_CTRL,
+                 "encoder turn inc=%ld pressed=%d grace_ms=%lu bank=%d",
+                 static_cast<long>(inc),
+                 spark.encoder.Pressed() ? 1 : 0,
+                 static_cast<unsigned long>(nowMs - lastEncoderPressMs),
+                 bankSelectActive ? 1 : 0);
+
+        if(bankSelectActive)
         {
             current.sparkMode = WrapIndex(current.sparkMode + static_cast<int>(inc), MODE_COUNT);
             encoderTurnedWhilePressed = true;
             DebugLog(DBG_INFO, DBG_CAT_CTRL, "bank -> %s", ModeName(current.sparkMode));
+            LogKnobFeedback("bank");
+            DebugStatusNow("bank");
         }
         else
         {
@@ -292,16 +402,22 @@ void ProcessEncoder()
             {
                 current.waveform = WrapIndex(current.waveform + static_cast<int>(inc), WAVE_COUNT);
                 DebugLog(DBG_INFO, DBG_CAT_CTRL, "waveform -> %d", current.waveform);
+                LogKnobFeedback("wave");
+                DebugStatusNow("wave");
             }
             else if(current.sparkMode == MODE_MACRO_A)
             {
                 current.macroA = WrapIndex(current.macroA + static_cast<int>(inc), MACRO_A_COUNT);
                 DebugLog(DBG_INFO, DBG_CAT_CTRL, "macroA -> %d", current.macroA);
+                LogKnobFeedback("macroA");
+                DebugStatusNow("macroA");
             }
             else
             {
                 current.macroB = WrapIndex(current.macroB + static_cast<int>(inc), MACRO_B_COUNT);
                 DebugLog(DBG_INFO, DBG_CAT_CTRL, "macroB -> %d", current.macroB);
+                LogKnobFeedback("macroB");
+                DebugStatusNow("macroB");
             }
         }
         MarkInteraction();
@@ -313,12 +429,14 @@ void ProcessEncoder()
         {
             stringVoice.Trig();
             DebugLog(DBG_INFO, DBG_CAT_CTRL, "string trig");
+            DebugStatusNow("string-trig");
         }
         else if(current.sparkMode == MODE_MACRO_B
                 && current.macroB == MACRO_B_BASS_DRUM_CLICK)
         {
             synthBassDrum.Trig();
             DebugLog(DBG_INFO, DBG_CAT_CTRL, "drum trig");
+            DebugStatusNow("drum-trig");
         }
     }
 }
@@ -326,22 +444,40 @@ void ProcessEncoder()
 void ProcessKnobs()
 {
     SparkSettings& current = storage.GetSettings();
-    const float    newFreq = freqParam.Process();
+    // Musical pitch mapping centered at middle C.
+    const float pitchNorm = Knob1Calibrated();
+    float semitones = ((pitchNorm * 2.0f) - 1.0f) * static_cast<float>(kKnobSemitoneSpan)
+                      + static_cast<float>(octaveShift * 12);
+    if(kQuantizeToWesternSemitones)
+    {
+        semitones = roundf(semitones);
+    }
+    const float newFreq = kMiddleC * powf(2.0f, semitones / 12.0f);
     if(fabsf(newFreq - current.waveformFreq) > 0.2f)
     {
         current.waveformFreq = newFreq;
         MarkInteraction();
-        DebugLog(DBG_TRACE, DBG_CAT_CTRL, "freq -> %.2f", current.waveformFreq);
+        DebugLog(DBG_TRACE, DBG_CAT_CTRL, "freq -> %.2f (oct=%d)", current.waveformFreq, octaveShift);
+        LogKnobFeedback("knob1");
+        DebugStatusNow("freq");
     }
 
     (void)shapeParam.Process();
+    const float shapeNow = Knob2Calibrated();
+    if(lastKnob2ShapeLog < 0.0f || fabsf(shapeNow - lastKnob2ShapeLog) > 0.02f)
+    {
+        lastKnob2ShapeLog = shapeNow;
+        DebugLog(DBG_TRACE, DBG_CAT_CTRL, "shape -> %.3f", shapeNow);
+        LogKnobFeedback("knob2");
+        DebugStatusNow("shape");
+    }
 }
 
 void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, size_t size)
 {
     (void)in;
     SparkSettings& current = storage.GetSettings();
-    const float    shape   = shapeParam.Value();
+    const float    shape   = Knob2Calibrated();
 
     osc.SetFreq(current.waveformFreq);
 
@@ -351,8 +487,36 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
 
         if(current.sparkMode == MODE_WAVEFORMS)
         {
-            osc.SetWaveform(static_cast<uint8_t>(current.waveform));
-            sig = (current.waveform == WAVE_RAMP) ? (-1.0f * osc.Process()) : osc.Process();
+            switch(current.waveform)
+            {
+                case WAVE_SIN:
+                    // Sine-to-triangle tilt for useful low-harmonic shaping.
+                    osc.SetWaveform(Oscillator::WAVE_SIN);
+                    sig = osc.Process();
+                    sig = ((1.0f - shape) * sig) + (shape * asinf(sig) * (2.0f / PI_F));
+                    break;
+                case WAVE_POLYBLEP_TRI:
+                    osc.SetWaveform(Oscillator::WAVE_POLYBLEP_TRI);
+                    osc.SetPw(0.5f + ((shape - 0.5f) * 0.3f));
+                    sig = osc.Process();
+                    break;
+                case WAVE_POLYBLEP_SAW:
+                    osc.SetWaveform(Oscillator::WAVE_POLYBLEP_SAW);
+                    osc.SetPw(0.3f + (shape * 0.4f));
+                    sig = osc.Process();
+                    break;
+                case WAVE_RAMP:
+                    osc.SetWaveform(Oscillator::WAVE_RAMP);
+                    osc.SetPw(0.3f + (shape * 0.4f));
+                    sig = -1.0f * osc.Process();
+                    break;
+                case WAVE_POLYBLEP_SQUARE:
+                default:
+                    osc.SetWaveform(Oscillator::WAVE_POLYBLEP_SQUARE);
+                    osc.SetPw(0.05f + (shape * 0.90f));
+                    sig = osc.Process();
+                    break;
+            }
         }
         else if(current.sparkMode == MODE_MACRO_A)
         {
@@ -469,6 +633,7 @@ int main(void) {
     overdrive.Init();
     spark.SetLedCalibration(Spark::LedTarget::Onboard, kOnboardLedCalibration);
     DebugInit();
+    spark.StartAdc();
 
     freqParam.Init(spark.knob1, 20.0f, 2000.0f, Parameter::LOGARITHMIC);
     shapeParam.Init(spark.knob2, 0.0f, 1.0f, Parameter::LINEAR);
@@ -478,6 +643,22 @@ int main(void) {
     while(1)
     {
         runtime.ProcessControls();
+
+        if(spark.button1.FallingEdge())
+        {
+            octaveShift = (octaveShift > kOctaveShiftMin) ? (octaveShift - 1) : kOctaveShiftMin;
+            MarkInteraction();
+            DebugLog(DBG_INFO, DBG_CAT_CTRL, "octave shift -> %d", octaveShift);
+            DebugStatusNow("oct-down");
+        }
+        if(spark.button2.FallingEdge())
+        {
+            octaveShift = (octaveShift < kOctaveShiftMax) ? (octaveShift + 1) : kOctaveShiftMax;
+            MarkInteraction();
+            DebugLog(DBG_INFO, DBG_CAT_CTRL, "octave shift -> %d", octaveShift);
+            DebugStatusNow("oct-up");
+        }
+
         ProcessEncoder();
         ProcessKnobs();
         UpdateLeds();
