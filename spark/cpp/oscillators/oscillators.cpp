@@ -128,6 +128,10 @@ PersistentStorage<SparkSettings> storage(spark.seed.qspi);
 #define SPARK_ENCODER_CLICK_WORKAROUND 1
 #endif
 
+#ifndef SPARK_TRACE_ENABLE
+#define SPARK_TRACE_ENABLE 0
+#endif
+
 static constexpr float kMiddleC            = 261.63f;
 static constexpr int   kKnobSemitoneSpan   = 12;
 static constexpr int   kOctaveShiftMin     = -2;
@@ -535,6 +539,15 @@ static void DebugLog(uint8_t level, uint8_t category, const char* format, ...)
 #endif
 }
 
+#if SPARK_TRACE_ENABLE
+#define TRACE_CTRL_LOG(...) DebugLog(DBG_TRACE, DBG_CAT_CTRL, __VA_ARGS__)
+#else
+#define TRACE_CTRL_LOG(...) \
+    do                     \
+    {                      \
+    } while(0)
+#endif
+
 static void DebugInit()
 {
 #if SPARK_DEBUG_ENABLE
@@ -600,7 +613,7 @@ static void DebugMaybeStatus()
 static void MarkInteraction()
 {
     runtime.MarkInteraction();
-    DebugLog(DBG_TRACE, DBG_CAT_CTRL, "interaction marked");
+    TRACE_CTRL_LOG("interaction marked");
 }
 
 static void UpdateLeds()
@@ -650,13 +663,13 @@ void ProcessEncoder()
     {
         encoderTurnedWhilePressed = false;
         lastEncoderPressMs        = nowMs;
-        DebugLog(DBG_TRACE, DBG_CAT_CTRL, "encoder press");
+        TRACE_CTRL_LOG("encoder press");
         DebugStatusNow("enc-press");
     }
 
     if(spark.encoder.FallingEdge())
     {
-        DebugLog(DBG_TRACE, DBG_CAT_CTRL, "encoder release");
+        TRACE_CTRL_LOG("encoder release");
         DebugStatusNow("enc-release");
     }
 
@@ -675,13 +688,11 @@ void ProcessEncoder()
         bankSelectActive
             = spark.encoder.Pressed() || ((nowMs - lastEncoderPressMs) <= kBankSwitchGraceMs);
 #endif
-        DebugLog(DBG_TRACE,
-                 DBG_CAT_CTRL,
-                 "encoder turn inc=%ld enc=%d sw2=%d bank=%d",
-                 static_cast<long>(inc),
-                 spark.encoder.Pressed() ? 1 : 0,
-                 spark.button2.Pressed() ? 1 : 0,
-                 bankSelectActive ? 1 : 0);
+        TRACE_CTRL_LOG("encoder turn inc=%ld enc=%d sw2=%d bank=%d",
+                       static_cast<long>(inc),
+                       spark.encoder.Pressed() ? 1 : 0,
+                       spark.button2.Pressed() ? 1 : 0,
+                       bankSelectActive ? 1 : 0);
 
         if(bankSelectActive)
         {
@@ -787,7 +798,7 @@ void ProcessKnobs()
         const bool k1Up = (lastKnob1LogValue < 0.0f) ? true : (pitchNorm >= lastKnob1LogValue);
         current.waveformFreq = newFreq;
         MarkInteraction();
-        DebugLog(DBG_TRACE, DBG_CAT_CTRL, "freq -> %.2f (oct=%d)", current.waveformFreq, octaveShift);
+        TRACE_CTRL_LOG("freq -> %.2f (oct=%d)", current.waveformFreq, octaveShift);
         if(octaveChangedPending)
         {
             // Switch press already emitted its own single-line feedback.
@@ -824,7 +835,7 @@ void ProcessKnobs()
         const bool k2Up = (lastKnob2ShapeLog < 0.0f) ? true : (shapeNow >= lastKnob2ShapeLog);
         lastKnob2ShapeLog = shapeNow;
         MarkInteraction();
-        DebugLog(DBG_TRACE, DBG_CAT_CTRL, "shape -> %.3f", shapeNow);
+        TRACE_CTRL_LOG("shape -> %.3f", shapeNow);
         LogKnobFeedback(k2Up ? "k2  up" : "k2  down");
         DebugStatusNow("shape");
     }
