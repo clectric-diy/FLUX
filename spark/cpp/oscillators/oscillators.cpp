@@ -152,6 +152,12 @@ static constexpr float kWaveWarmthTimbreAlphaSpan = 0.045f;
 static constexpr float kWaveWarmthDrive = 1.30f;
 static constexpr float kWaveWarmthWet = 0.35f;
 static constexpr float kWaveOutputGain = 0.78f;
+static constexpr float kWaveGainSine = 1.0000f;   // 3.90V reference
+static constexpr float kWaveGainTri = 1.0183f;    // 3.90 / 3.83
+static constexpr float kWaveGainSaw = 1.0541f;    // 3.90 / 3.70
+static constexpr float kWaveGainSquare = 1.1607f; // 3.90 / 3.36
+static constexpr float kWaveGainRamp = 1.0236f;   // 3.90 / 3.81
+static constexpr float kWaveGainSuperSaw = 1.0000f; // Pending stabilized scope stats.
 static constexpr float kFinalLimiterDrive = 1.15f;
 static constexpr float kFinalLimiterMakeup = 0.92f;
 static float            modifierHarmonics = 0.0f;
@@ -230,7 +236,16 @@ static float CurrentModelOutputGain(const SparkSettings& current)
 {
     if(current.sparkMode == MODE_WAVEFORMS)
     {
-        return kWaveOutputGain;
+        switch(current.waveform)
+        {
+            case WAVE_SIN: return kWaveOutputGain * kWaveGainSine;
+            case WAVE_POLYBLEP_TRI: return kWaveOutputGain * kWaveGainTri;
+            case WAVE_POLYBLEP_SAW: return kWaveOutputGain * kWaveGainSaw;
+            case WAVE_POLYBLEP_SQUARE: return kWaveOutputGain * kWaveGainSquare;
+            case WAVE_RAMP: return kWaveOutputGain * kWaveGainRamp;
+            case WAVE_SUPERSAW: return kWaveOutputGain * kWaveGainSuperSaw;
+            default: return kWaveOutputGain;
+        }
     }
     if(current.sparkMode == MODE_MACRO_A)
     {
