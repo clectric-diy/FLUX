@@ -32,9 +32,8 @@ static Parameter             shapeParam;
 static const auto SAVE_DELAY_MS       = 3000U;
 static float      sampleRate          = 48000.0f;
 static float      drumPhase           = 0.0f;
-static bool       encoderTurnedWhilePressed = false;
-static bool       i2cScanPrinted            = false;
-static uint32_t   lastEncoderPressMs        = 0;
+static bool     encoderTurnedWhilePressed = false;
+static uint32_t lastEncoderPressMs        = 0;
 static int        octaveShift               = 0;
 static bool       octaveChangedPending      = false;
 static float      lastKnob2ShapeLog         = -1.0f;
@@ -49,6 +48,17 @@ static Spark::LedCalibration kOnboardLedCalibration = {
     1.00f, // blue_gain
     1.80f  // gamma
 };
+
+// I2C RGB in front of PEL12T (or similar). Set in Makefile, e.g. -DSPARK_ENCODER_I2C_ADDR7=0x30
+#ifndef SPARK_ENCODER_I2C_ADDR7
+#define SPARK_ENCODER_I2C_ADDR7 0u
+#endif
+#ifndef SPARK_ENCODER_I2C_REG
+#define SPARK_ENCODER_I2C_REG 0u
+#endif
+
+// Match onboard until you tune the shaft separately.
+static const Spark::LedCalibration kEncoderI2cLedCalibration = kOnboardLedCalibration;
 
 enum SparkModes {
     MODE_WAVEFORMS = 0,
@@ -131,6 +141,10 @@ PersistentStorage<SparkSettings> storage(spark.seed.qspi);
 #define SPARK_TRACE_ENABLE 0
 #endif
 
+#ifndef SPARK_I2C_SCAN_BOOT
+#define SPARK_I2C_SCAN_BOOT 1
+#endif
+
 static constexpr float kMiddleC            = 261.63f;
 static constexpr int   kKnobSemitoneSpan   = 12;
 static constexpr int   kOctaveShiftMin     = -2;
@@ -142,6 +156,10 @@ static constexpr bool  kQuantizeToWesternSemitones = false;
 static constexpr float kShapeDeadband = 0.005f;
 static constexpr float kShapeSmoothingAlpha = 0.20f;
 static constexpr float kShapeLogStep = 0.02f;
+// k1: raw ADC wiggles ~0.1–1% of range; that maps to noticeable Hz. Smooth for freq; freeze while
+// k1 is latched after sw2.
+static constexpr float kPitchSmoothAlpha  = 0.16f;
+static constexpr float kFreqUpdateMinDeltaHz = 0.5f;
 static constexpr float kKnob1Min = 0.00f;
 static constexpr float kKnob1Max = 0.96f;
 static constexpr float kKnob2Min = 0.00f;
@@ -162,7 +180,10 @@ static bool             sw2ModifierActive = false;
 static bool             prevSw2ModifierForLatch = false;
 static bool             k1PitchFrozenAfterModifier = false;
 static float            k1NormLatchOnModifierExit = 0.0f;
-static constexpr float  kPitchRearmMove = 0.035f;
+static bool             k2ShapeFrozenAfterModifier = false;
+static float            k2NormLatchOnModifierExit = 0.0f;
+static constexpr float  kKnobRearmMove   = 0.035f;
+static float            k1PitchForFreq  = -1.0f;
 
 static float CalibrateKnob(float raw, float minv, float maxv)
 {
@@ -586,7 +607,8 @@ static void DebugInit()
 
 static void DebugMaybePrintI2cScan()
 {
-#if SPARK_DEBUG_ENABLE
+#if SPARK_DEBUG_ENABLE && (SPARK_I2C_SCAN_BOOT)
+    static bool i2cScanPrinted = false;
     if(i2cScanPrinted || System::GetNow() < 2000U)
     {
         return;
@@ -672,6 +694,7 @@ static void UpdateLeds()
 
     spark.led1.Set(led1r, led1g, led1b);
     spark.led2.Set(led2r, led2g, led2b);
+    spark.SetEncoderI2cRgb(itemColor.r * 0.45f, itemColor.g * 0.45f, itemColor.b * 0.45f);
     spark.UpdateLeds();
 }
 
@@ -790,16 +813,21 @@ void ProcessKnobs()
     const float shapeRaw = Knob2Calibrated();
     const float pitchNorm = Knob1Calibrated();
 
+    if(k1PitchForFreq < 0.0f)
+    {
+        k1PitchForFreq = pitchNorm;
+    }
+
     const bool modNow = sw2ModifierActive;
     if(!modNow && prevSw2ModifierForLatch)
     {
         k1PitchFrozenAfterModifier = true;
         k1NormLatchOnModifierExit  = pitchNorm;
         lastKnob1LogValue          = pitchNorm;
-        // k2 was driving morph; snap timbre smoother to the knob to avoid a slew/jump fight.
-        shapeTarget       = shapeRaw;
-        shapeSmoothed     = shapeRaw;
-        lastKnob2ShapeLog = -1.0f;
+        // k2 was driving morph (k4); do not snap timbre to the knob — freeze timbre from k2
+        // until the knob moves again (same idea as k1/k3).
+        k2ShapeFrozenAfterModifier = true;
+        k2NormLatchOnModifierExit  = shapeRaw;
     }
     prevSw2ModifierForLatch = modNow;
 
@@ -831,23 +859,29 @@ void ProcessKnobs()
 
     if(k1PitchFrozenAfterModifier)
     {
-        if(fabsf(pitchNorm - k1NormLatchOnModifierExit) > kPitchRearmMove)
+        if(fabsf(pitchNorm - k1NormLatchOnModifierExit) > kKnobRearmMove)
         {
             k1PitchFrozenAfterModifier = false;
+            k1PitchForFreq             = pitchNorm;
         }
         else
         {
             lastKnob1LogValue = pitchNorm;
         }
     }
+    else
+    {
+        k1PitchForFreq += kPitchSmoothAlpha * (pitchNorm - k1PitchForFreq);
+    }
 
-    // Musical pitch mapping centered at middle C.
+    // Musical pitch mapping centered at middle C; use k1PitchForFreq (low-pass) not raw ADC.
     if(!k1PitchFrozenAfterModifier)
     {
-        const float newFreq = CurrentPitchFrequency(pitchNorm);
-        if(fabsf(newFreq - current.waveformFreq) > 0.2f)
+        const float newFreq = CurrentPitchFrequency(k1PitchForFreq);
+        if(fabsf(newFreq - current.waveformFreq) > kFreqUpdateMinDeltaHz)
         {
-            const bool k1Up = (lastKnob1LogValue < 0.0f) ? true : (pitchNorm >= lastKnob1LogValue);
+            const bool k1Up
+                = (lastKnob1LogValue < 0.0f) ? true : (k1PitchForFreq >= lastKnob1LogValue);
             current.waveformFreq = newFreq;
             MarkInteraction();
             TRACE_CTRL_LOG("freq -> %.2f (oct=%d)", current.waveformFreq, octaveShift);
@@ -860,37 +894,48 @@ void ProcessKnobs()
             {
                 LogKnobFeedback(k1Up ? "k1  up" : "k1  down");
             }
-            lastKnob1LogValue = pitchNorm;
+            lastKnob1LogValue = k1PitchForFreq;
             DebugStatusNow("freq");
         }
         else
         {
-            lastKnob1LogValue = pitchNorm;
+            lastKnob1LogValue = k1PitchForFreq;
         }
     }
 
     (void)shapeParam.Process();
-    if(shapeTarget < 0.0f || shapeSmoothed < 0.0f)
+    if(k2ShapeFrozenAfterModifier)
     {
-        shapeTarget   = shapeRaw;
-        shapeSmoothed = shapeRaw;
+        if(fabsf(shapeRaw - k2NormLatchOnModifierExit) > kKnobRearmMove)
+        {
+            k2ShapeFrozenAfterModifier = false;
+        }
     }
 
-    if(fabsf(shapeRaw - shapeTarget) > kShapeDeadband)
+    if(!k2ShapeFrozenAfterModifier)
     {
-        shapeTarget = shapeRaw;
-    }
+        if(shapeTarget < 0.0f || shapeSmoothed < 0.0f)
+        {
+            shapeTarget   = shapeRaw;
+            shapeSmoothed = shapeRaw;
+        }
 
-    shapeSmoothed += kShapeSmoothingAlpha * (shapeTarget - shapeSmoothed);
-    const float shapeNow = shapeSmoothed;
-    if(lastKnob2ShapeLog < 0.0f || fabsf(shapeNow - lastKnob2ShapeLog) > kShapeLogStep)
-    {
-        const bool k2Up = (lastKnob2ShapeLog < 0.0f) ? true : (shapeNow >= lastKnob2ShapeLog);
-        lastKnob2ShapeLog = shapeNow;
-        MarkInteraction();
-        TRACE_CTRL_LOG("shape -> %.3f", shapeNow);
-        LogKnobFeedback(k2Up ? "k2  up" : "k2  down");
-        DebugStatusNow("shape");
+        if(fabsf(shapeRaw - shapeTarget) > kShapeDeadband)
+        {
+            shapeTarget = shapeRaw;
+        }
+
+        shapeSmoothed += kShapeSmoothingAlpha * (shapeTarget - shapeSmoothed);
+        const float shapeNow = shapeSmoothed;
+        if(lastKnob2ShapeLog < 0.0f || fabsf(shapeNow - lastKnob2ShapeLog) > kShapeLogStep)
+        {
+            const bool k2Up = (lastKnob2ShapeLog < 0.0f) ? true : (shapeNow >= lastKnob2ShapeLog);
+            lastKnob2ShapeLog = shapeNow;
+            MarkInteraction();
+            TRACE_CTRL_LOG("shape -> %.3f", shapeNow);
+            LogKnobFeedback(k2Up ? "k2  up" : "k2  down");
+            DebugStatusNow("shape");
+        }
     }
 }
 
@@ -1172,6 +1217,13 @@ int main(void) {
     grainlet.Init(sampleRate);
     overdrive.Init();
     spark.SetLedCalibration(Spark::LedTarget::Onboard, kOnboardLedCalibration);
+    spark.SetLedCalibration(Spark::LedTarget::Encoder, kEncoderI2cLedCalibration);
+#if SPARK_ENCODER_I2C_ADDR7 != 0u
+    spark.ConfigureEncoderI2cRgb(
+        static_cast<uint8_t>(SPARK_ENCODER_I2C_ADDR7 & 0x7Fu),
+        Spark::EncoderI2cRgbFormat::Reg8WriteDataAtAddressRgb8,
+        static_cast<uint8_t>(SPARK_ENCODER_I2C_REG & 0xFFu));
+#endif
     DebugInit();
     spark.StartAdc();
 
