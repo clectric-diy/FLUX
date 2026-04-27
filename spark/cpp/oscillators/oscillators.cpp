@@ -29,7 +29,11 @@ static bool       encoderTurnedWhilePressed = false;
 static bool       i2cScanPrinted            = false;
 static uint32_t   lastEncoderPressMs        = 0;
 static int        octaveShift               = 0;
+static bool       octaveChangedPending      = false;
 static float      lastKnob2ShapeLog         = -1.0f;
+static float      lastKnob1LogValue         = -1.0f;
+static float      shapeTarget               = -1.0f;
+static float      shapeSmoothed             = -1.0f;
 static uint32_t   lastKnobFeedbackMs        = 0;
 static Spark::LedCalibration kOnboardLedCalibration = {
     0.45f, // global_gain
@@ -112,11 +116,21 @@ static constexpr int   kOctaveShiftMin     = -2;
 static constexpr int   kOctaveShiftMax     = 2;
 static constexpr uint32_t kBankSwitchGraceMs = 180;
 static constexpr uint32_t kKnobFeedbackIntervalMs = 120;
+static constexpr uint32_t kSw2HoldMs = 220;
 static constexpr bool  kQuantizeToWesternSemitones = false;
+static constexpr float kShapeDeadband = 0.005f;
+static constexpr float kShapeSmoothingAlpha = 0.20f;
+static constexpr float kShapeLogStep = 0.02f;
 static constexpr float kKnob1Min = 0.00f;
 static constexpr float kKnob1Max = 0.96f;
 static constexpr float kKnob2Min = 0.00f;
 static constexpr float kKnob2Max = 0.96f;
+static float            controlParam1 = 0.0f;
+static float            controlParam2 = 0.0f;
+static float            controlParam3 = 0.0f;
+static float            controlParam4 = 0.0f;
+static uint32_t         sw2PressStartMs = 0;
+static bool             sw2ModifierActive = false;
 
 static float CalibrateKnob(float raw, float minv, float maxv)
 {
@@ -144,6 +158,15 @@ static float Knob1Calibrated()
 static float Knob2Calibrated()
 {
     return CalibrateKnob(spark.knob2.Value(), kKnob2Min, kKnob2Max);
+}
+
+static float CurrentShapeValue()
+{
+    if(shapeSmoothed < 0.0f)
+    {
+        return Knob2Calibrated();
+    }
+    return shapeSmoothed;
 }
 
 static const char* ModeName(int mode)
@@ -215,13 +238,83 @@ static void LogKnobFeedback(const char* source)
     }
     lastKnobFeedbackMs = now;
 
+    char label[16];
+    snprintf(label, sizeof(label), "%-10s", source);
+
     SparkSettings& current = storage.GetSettings();
     diagnostics.Log(DBG_INFO,
                     DBG_CAT_CTRL,
-                    "%s freq=%dHz shape=%d%% oct=%d",
-                    source,
+                    "%sfreq=%dHz timbre=%d%% oct=%d",
+                    label,
                     static_cast<int>(current.waveformFreq),
                     static_cast<int>(Knob2Calibrated() * 100.0f),
+                    octaveShift);
+}
+
+static int ParamPct(float value)
+{
+    if(value < 0.0f)
+    {
+        value = 0.0f;
+    }
+    if(value > 1.0f)
+    {
+        value = 1.0f;
+    }
+    return static_cast<int>(value * 100.0f);
+}
+
+static void LogModifierFeedback(const char* source)
+{
+    const uint32_t now = System::GetNow();
+    if((now - lastKnobFeedbackMs) < kKnobFeedbackIntervalMs)
+    {
+        return;
+    }
+    lastKnobFeedbackMs = now;
+
+    char label[16];
+    snprintf(label, sizeof(label), "%-10s", source);
+
+    diagnostics.Log(DBG_INFO,
+                    DBG_CAT_CTRL,
+                    "%sharmonics=%d%% morph=%d%%",
+                    label,
+                    ParamPct(controlParam3),
+                    ParamPct(controlParam4));
+}
+
+static void LogModifierState(const char* state)
+{
+    diagnostics.Log(DBG_INFO,
+                    DBG_CAT_CTRL,
+                    "%-10smod=%s harmonics=%d%% morph=%d%%",
+                    "sw2 hold",
+                    state,
+                    ParamPct(controlParam3),
+                    ParamPct(controlParam4));
+}
+
+static void LogSwitchFeedback(const char* switch_name)
+{
+    const float pitchNorm = Knob1Calibrated();
+    float semitones = ((pitchNorm * 2.0f) - 1.0f) * static_cast<float>(kKnobSemitoneSpan)
+                      + static_cast<float>(octaveShift * 12);
+    if(kQuantizeToWesternSemitones)
+    {
+        semitones = roundf(semitones);
+    }
+    const float targetFreq = kMiddleC * powf(2.0f, semitones / 12.0f);
+    const int   shapePct   = static_cast<int>(Knob2Calibrated() * 100.0f);
+    char        label[16];
+    snprintf(label, sizeof(label), "%s push", switch_name);
+
+    diagnostics.Log(DBG_INFO,
+                    DBG_CAT_CTRL,
+                    "%-10sfreq=%dHz timbre=%d%% oct=%d",
+                    label,
+                    static_cast<int>(targetFreq),
+                    shapePct,
                     octaveShift);
 }
 
@@ -358,7 +451,7 @@ static void UpdateLeds()
 void ProcessEncoder()
 {
     SparkSettings& current = storage.GetSettings();
-    const int32_t  inc     = spark.encoder.Increment();
+    const int32_t  inc     = -spark.encoder.Increment();
     const uint32_t nowMs   = System::GetNow();
 
     if(spark.encoder.RisingEdge())
@@ -377,6 +470,9 @@ void ProcessEncoder()
 
     if(inc != 0)
     {
+        const char* encDir = (inc > 0) ? "enc up" : "enc down";
+        char        encLabel[16];
+        snprintf(encLabel, sizeof(encLabel), "%-10s", encDir);
         // Be tolerant of slight timing jitter between click and first detent.
         const bool bankSelectActive
             = spark.encoder.Pressed() || ((nowMs - lastEncoderPressMs) <= kBankSwitchGraceMs);
@@ -392,8 +488,14 @@ void ProcessEncoder()
         {
             current.sparkMode = WrapIndex(current.sparkMode + static_cast<int>(inc), MODE_COUNT);
             encoderTurnedWhilePressed = true;
-            DebugLog(DBG_INFO, DBG_CAT_CTRL, "bank -> %s", ModeName(current.sparkMode));
-            LogKnobFeedback("bank");
+            diagnostics.Log(DBG_INFO,
+                            DBG_CAT_CTRL,
+                            "%sbank=%s wf=%d a=%d b=%d",
+                            encLabel,
+                            ModeName(current.sparkMode),
+                            current.waveform,
+                            current.macroA,
+                            current.macroB);
             DebugStatusNow("bank");
         }
         else
@@ -401,22 +503,34 @@ void ProcessEncoder()
             if(current.sparkMode == MODE_WAVEFORMS)
             {
                 current.waveform = WrapIndex(current.waveform + static_cast<int>(inc), WAVE_COUNT);
-                DebugLog(DBG_INFO, DBG_CAT_CTRL, "waveform -> %d", current.waveform);
-                LogKnobFeedback("wave");
+                diagnostics.Log(DBG_INFO,
+                                DBG_CAT_CTRL,
+                                "%smode=%s wave=%d",
+                                encLabel,
+                                ModeName(current.sparkMode),
+                                current.waveform);
                 DebugStatusNow("wave");
             }
             else if(current.sparkMode == MODE_MACRO_A)
             {
                 current.macroA = WrapIndex(current.macroA + static_cast<int>(inc), MACRO_A_COUNT);
-                DebugLog(DBG_INFO, DBG_CAT_CTRL, "macroA -> %d", current.macroA);
-                LogKnobFeedback("macroA");
+                diagnostics.Log(DBG_INFO,
+                                DBG_CAT_CTRL,
+                                "%smode=%s macroA=%d",
+                                encLabel,
+                                ModeName(current.sparkMode),
+                                current.macroA);
                 DebugStatusNow("macroA");
             }
             else
             {
                 current.macroB = WrapIndex(current.macroB + static_cast<int>(inc), MACRO_B_COUNT);
-                DebugLog(DBG_INFO, DBG_CAT_CTRL, "macroB -> %d", current.macroB);
-                LogKnobFeedback("macroB");
+                diagnostics.Log(DBG_INFO,
+                                DBG_CAT_CTRL,
+                                "%smode=%s macroB=%d",
+                                encLabel,
+                                ModeName(current.sparkMode),
+                                current.macroB);
                 DebugStatusNow("macroB");
             }
         }
@@ -444,8 +558,39 @@ void ProcessEncoder()
 void ProcessKnobs()
 {
     SparkSettings& current = storage.GetSettings();
-    // Musical pitch mapping centered at middle C.
+    const float shapeRaw = Knob2Calibrated();
     const float pitchNorm = Knob1Calibrated();
+
+    if(sw2ModifierActive)
+    {
+        const bool k3Up = (controlParam3 <= 0.0f) ? true : (pitchNorm >= controlParam3);
+        const bool k4Up = (controlParam4 <= 0.0f) ? true : (shapeRaw >= controlParam4);
+        bool       changed = false;
+
+        if(fabsf(pitchNorm - controlParam3) > 0.01f)
+        {
+            controlParam3 = pitchNorm;
+            changed    = true;
+            LogModifierFeedback(k3Up ? "k3  up" : "k3  down");
+        }
+        if(fabsf(shapeRaw - controlParam4) > 0.01f)
+        {
+            controlParam4 = shapeRaw;
+            changed    = true;
+            LogModifierFeedback(k4Up ? "k4  up" : "k4  down");
+        }
+        if(changed)
+        {
+            MarkInteraction();
+            DebugStatusNow("sw2-mod");
+        }
+        return;
+    }
+
+    controlParam1 = pitchNorm;
+    controlParam2 = shapeRaw;
+
+    // Musical pitch mapping centered at middle C.
     float semitones = ((pitchNorm * 2.0f) - 1.0f) * static_cast<float>(kKnobSemitoneSpan)
                       + static_cast<float>(octaveShift * 12);
     if(kQuantizeToWesternSemitones)
@@ -455,20 +600,48 @@ void ProcessKnobs()
     const float newFreq = kMiddleC * powf(2.0f, semitones / 12.0f);
     if(fabsf(newFreq - current.waveformFreq) > 0.2f)
     {
+        const bool k1Up = (lastKnob1LogValue < 0.0f) ? true : (pitchNorm >= lastKnob1LogValue);
         current.waveformFreq = newFreq;
         MarkInteraction();
         DebugLog(DBG_TRACE, DBG_CAT_CTRL, "freq -> %.2f (oct=%d)", current.waveformFreq, octaveShift);
-        LogKnobFeedback("knob1");
+        if(octaveChangedPending)
+        {
+            // Switch press already emitted its own single-line feedback.
+            octaveChangedPending = false;
+        }
+        else
+        {
+            LogKnobFeedback(k1Up ? "k1  up" : "k1  down");
+        }
+        lastKnob1LogValue = pitchNorm;
         DebugStatusNow("freq");
+    }
+    else
+    {
+        lastKnob1LogValue = pitchNorm;
     }
 
     (void)shapeParam.Process();
-    const float shapeNow = Knob2Calibrated();
-    if(lastKnob2ShapeLog < 0.0f || fabsf(shapeNow - lastKnob2ShapeLog) > 0.02f)
+    if(shapeTarget < 0.0f || shapeSmoothed < 0.0f)
     {
+        shapeTarget   = shapeRaw;
+        shapeSmoothed = shapeRaw;
+    }
+
+    if(fabsf(shapeRaw - shapeTarget) > kShapeDeadband)
+    {
+        shapeTarget = shapeRaw;
+    }
+
+    shapeSmoothed += kShapeSmoothingAlpha * (shapeTarget - shapeSmoothed);
+    const float shapeNow = shapeSmoothed;
+    if(lastKnob2ShapeLog < 0.0f || fabsf(shapeNow - lastKnob2ShapeLog) > kShapeLogStep)
+    {
+        const bool k2Up = (lastKnob2ShapeLog < 0.0f) ? true : (shapeNow >= lastKnob2ShapeLog);
         lastKnob2ShapeLog = shapeNow;
+        MarkInteraction();
         DebugLog(DBG_TRACE, DBG_CAT_CTRL, "shape -> %.3f", shapeNow);
-        LogKnobFeedback("knob2");
+        LogKnobFeedback(k2Up ? "k2  up" : "k2  down");
         DebugStatusNow("shape");
     }
 }
@@ -477,7 +650,9 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
 {
     (void)in;
     SparkSettings& current = storage.GetSettings();
-    const float    shape   = Knob2Calibrated();
+    const float    shape   = CurrentShapeValue();
+    const float    p3      = controlParam3;
+    const float    p4      = controlParam4;
 
     osc.SetFreq(current.waveformFreq);
 
@@ -524,16 +699,16 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
             {
                 case MACRO_A_VARIABLE_SAW:
                     variableSaw.SetFreq(current.waveformFreq);
-                    variableSaw.SetPW((shape * 2.0f) - 1.0f);
-                    variableSaw.SetWaveshape(shape);
+                    variableSaw.SetPW(((shape * 2.0f) - 1.0f) * (0.4f + (p3 * 0.6f)));
+                    variableSaw.SetWaveshape((shape * (1.0f - (p4 * 0.5f))) + (p4 * 0.5f));
                     sig = variableSaw.Process();
                     break;
 
                 case MACRO_A_VOSIM:
                     vosim.SetFreq(current.waveformFreq);
-                    vosim.SetForm1Freq(current.waveformFreq * (1.0f + (shape * 2.0f)));
-                    vosim.SetForm2Freq(current.waveformFreq * (2.0f + (shape * 3.0f)));
-                    vosim.SetShape((shape * 2.0f) - 1.0f);
+                    vosim.SetForm1Freq(current.waveformFreq * (1.0f + (shape * (1.0f + (p3 * 3.0f)))));
+                    vosim.SetForm2Freq(current.waveformFreq * (2.0f + (shape * (2.0f + (p4 * 6.0f)))));
+                    vosim.SetShape(((shape * 2.0f) - 1.0f) * (0.35f + (p3 * 0.65f)));
                     sig = vosim.Process();
                     break;
 
@@ -541,10 +716,10 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
                 default:
                     stringVoice.SetSustain(true);
                     stringVoice.SetFreq(current.waveformFreq);
-                    stringVoice.SetAccent(0.7f);
-                    stringVoice.SetStructure(shape);
-                    stringVoice.SetBrightness(shape);
-                    stringVoice.SetDamping(1.0f - (shape * 0.8f));
+                    stringVoice.SetAccent(0.35f + (p3 * 0.65f));
+                    stringVoice.SetStructure((shape * 0.7f) + (p3 * 0.3f));
+                    stringVoice.SetBrightness((shape * 0.6f) + (p4 * 0.4f));
+                    stringVoice.SetDamping(1.0f - (((shape * 0.65f) + (p4 * 0.35f)) * 0.8f));
                     sig = stringVoice.Process(false);
                     break;
             }
@@ -612,13 +787,15 @@ int main(void) {
     System::Delay(500);
 
     SparkSettings defaultSettings;
-    defaultSettings.sparkMode    = MODE_WAVEFORMS;
+    defaultSettings.sparkMode    = MODE_MACRO_A;
     defaultSettings.waveform     = WAVE_SIN;
     defaultSettings.waveformFreq = 261.63f;
     defaultSettings.macroA = 0;
     defaultSettings.macroB = 0;
 
     storage.Init(defaultSettings);
+    // Encoder click is currently unavailable, so force startup to bank 2 (macroA).
+    storage.GetSettings().sparkMode = MODE_MACRO_A;
     spark.SetAudioBlockSize(4);
     sampleRate = spark.AudioSampleRate();
 
@@ -644,19 +821,44 @@ int main(void) {
     {
         runtime.ProcessControls();
 
+        const uint32_t nowMs = System::GetNow();
+        if(spark.button2.RisingEdge())
+        {
+            sw2PressStartMs   = nowMs;
+            sw2ModifierActive = false;
+        }
+        if(spark.button2.Pressed() && !sw2ModifierActive
+           && ((nowMs - sw2PressStartMs) >= kSw2HoldMs))
+        {
+            sw2ModifierActive = true;
+            LogModifierState("on");
+            DebugStatusNow("sw2-mod-on");
+        }
+
         if(spark.button1.FallingEdge())
         {
-            octaveShift = (octaveShift > kOctaveShiftMin) ? (octaveShift - 1) : kOctaveShiftMin;
+            octaveShift = (octaveShift < kOctaveShiftMax) ? (octaveShift + 1) : kOctaveShiftMax;
+            octaveChangedPending = true;
             MarkInteraction();
-            DebugLog(DBG_INFO, DBG_CAT_CTRL, "octave shift -> %d", octaveShift);
-            DebugStatusNow("oct-down");
+            LogSwitchFeedback("sw1");
+            DebugStatusNow("oct-up");
         }
         if(spark.button2.FallingEdge())
         {
-            octaveShift = (octaveShift < kOctaveShiftMax) ? (octaveShift + 1) : kOctaveShiftMax;
-            MarkInteraction();
-            DebugLog(DBG_INFO, DBG_CAT_CTRL, "octave shift -> %d", octaveShift);
-            DebugStatusNow("oct-up");
+            if(sw2ModifierActive)
+            {
+                sw2ModifierActive = false;
+                LogModifierState("off");
+                DebugStatusNow("sw2-mod-off");
+            }
+            else
+            {
+                octaveShift = (octaveShift > kOctaveShiftMin) ? (octaveShift - 1) : kOctaveShiftMin;
+                octaveChangedPending = true;
+                MarkInteraction();
+                LogSwitchFeedback("sw2");
+                DebugStatusNow("oct-down");
+            }
         }
 
         ProcessEncoder();

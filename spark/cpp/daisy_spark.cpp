@@ -373,6 +373,7 @@ void SparkDiagnostics::RefreshStatusLine(const char* mode_name,
                                          bool        button2_pressed)
 {
     // Keep this comfortably below LOGGER_BUFFER (128) to avoid "$$" overflow markers.
+    // Also keep redraw width narrow enough to avoid terminal wrap.
     char line[96];
     const int freq_i = static_cast<int>(frequency_hz);
     const int k1_i   = static_cast<int>(knob1_value * 100.0f);
@@ -396,7 +397,7 @@ void SparkDiagnostics::RefreshStatusLine(const char* mode_name,
         return;
     }
     // Redraw the same console line without adding scrollback.
-    spark_.seed.Print("\r%-96s", line);
+    spark_.seed.Print("\r%-72s", line);
 }
 
 void SparkDiagnostics::LogHeartbeat(const char* firmware_name, uint32_t interval_ms)
