@@ -1,7 +1,7 @@
 # Project Name
 TARGET = oscillators
 
-USE_DAISYSP_LGPL = 1
+USE_DAISYSP_LGPL = 0
 
 C_INCLUDES += -I../
 
