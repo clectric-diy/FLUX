@@ -7,67 +7,24 @@
 
 using namespace daisy_spark;
 
-// # Rev3 and Rev4 with newest pinout.
 // Compatible with Seed Rev3 and Rev4
-constexpr Pin SW_1_PIN = seed::D27;
-constexpr Pin SW_2_PIN = seed::D28;
+constexpr Pin SW_1_PIN       = seed::D27;
+constexpr Pin SW_2_PIN       = seed::D28;
 
-constexpr Pin ENC_A_PIN     = seed::D26;
-constexpr Pin ENC_B_PIN     = seed::D25;
-constexpr Pin ENC_CLICK_PIN = seed::D13;
+constexpr Pin KNOB_1_PIN     = seed::D21;
+constexpr Pin KNOB_2_PIN     = seed::D15;
 
-constexpr Pin LED_1_R_PIN = seed::D20;
-constexpr Pin LED_1_G_PIN = seed::D19;
-constexpr Pin LED_1_B_PIN = seed::D18;
-constexpr Pin LED_2_R_PIN = seed::D17;
-constexpr Pin LED_2_G_PIN = seed::D24;
-constexpr Pin LED_2_B_PIN = seed::D23;
+constexpr Pin ENC_A_PIN      = seed::D26;
+constexpr Pin ENC_B_PIN      = seed::D25;
+constexpr Pin ENC_CLICK_PIN  = seed::D13;
 
-constexpr Pin KNOB_1_PIN = seed::D21;
-constexpr Pin KNOB_2_PIN = seed::D15;
+constexpr Pin LED_1_R_PIN    = seed::D20;
+constexpr Pin LED_1_G_PIN    = seed::D19;
+constexpr Pin LED_1_B_PIN    = seed::D18;
 
-/*
-// Leaving in place until older hardware is totally deprecated.
-#ifndef SEED_REV2
-
-// Rev2 Pinout
-// Compatible with Seed rev1 and rev2
-
-#define SW_1_PIN 28
-#define SW_2_PIN 29
-
-#define ENC_A_PIN 27
-#define ENC_B_PIN 26
-#define ENC_CLICK_PIN 14
-
-#define LED_1_R_PIN 21
-#define LED_1_G_PIN 20
-#define LED_1_B_PIN 19
-#define LED_2_R_PIN 0
-#define LED_2_G_PIN 25
-#define LED_2_B_PIN 24
-
-#else
-
-// Rev1 Pinout
-// Compatible with Seed rev1 and rev2
-
-#define SW_1_PIN 29
-#define SW_2_PIN 28
-
-#define ENC_A_PIN 27
-#define ENC_B_PIN 26
-#define ENC_CLICK_PIN 1
-
-#define LED_1_R_PIN 21
-#define LED_1_G_PIN 20
-#define LED_1_B_PIN 19
-#define LED_2_R_PIN 0
-#define LED_2_G_PIN 25
-#define LED_2_B_PIN 24
-
-#endif
-*/
+constexpr Pin LED_2_R_PIN    = seed::D17;
+constexpr Pin LED_2_G_PIN    = seed::D24;
+constexpr Pin LED_2_B_PIN    = seed::D23;
 
 void Spark::Init(bool boost)
 {
