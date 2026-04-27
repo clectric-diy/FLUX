@@ -900,14 +900,13 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
                     break;
                 }
                 case WAVE_POLYBLEP_SQUARE:
-                    // Naive square for sharper scope edges; scale to match polyBLEP peak (~0.707)
-                    // so existing kWaveGainSquare stays close. Expect more aliasing at high pitch.
-                    osc.SetWaveform(Oscillator::WAVE_SQUARE);
+                    // Band-limited square; PW uses linear shape (not CurvedControls timbre pow).
+                    osc.SetWaveform(Oscillator::WAVE_POLYBLEP_SQUARE);
                     {
                         const float pw = 0.10f + fclamp(timbreIn, 0.0f, 1.0f) * 0.80f;
                         osc.SetPw(pw);
                     }
-                    sig = osc.Process() * 0.70710677f;
+                    sig = osc.Process();
                     break;
                 default:
                     osc.SetWaveform(Oscillator::WAVE_SIN);
