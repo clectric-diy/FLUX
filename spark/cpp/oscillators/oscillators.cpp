@@ -157,6 +157,12 @@ static float            modifierHarmonics = 0.0f;
 static float            modifierMorph = 0.0f;
 static uint32_t         sw2PressStartMs = 0;
 static bool             sw2ModifierActive = false;
+// While sw2 modifier is on, k1 edits harmonics (k3) and does not update pitch; on release, do not
+// snap freq to k1 until the knob moves again (otherwise k3 and k1 appear coupled).
+static bool             prevSw2ModifierForLatch = false;
+static bool             k1PitchFrozenAfterModifier = false;
+static float            k1NormLatchOnModifierExit = 0.0f;
+static constexpr float  kPitchRearmMove = 0.035f;
 
 static float CalibrateKnob(float raw, float minv, float maxv)
 {
@@ -784,6 +790,19 @@ void ProcessKnobs()
     const float shapeRaw = Knob2Calibrated();
     const float pitchNorm = Knob1Calibrated();
 
+    const bool modNow = sw2ModifierActive;
+    if(!modNow && prevSw2ModifierForLatch)
+    {
+        k1PitchFrozenAfterModifier = true;
+        k1NormLatchOnModifierExit  = pitchNorm;
+        lastKnob1LogValue          = pitchNorm;
+        // k2 was driving morph; snap timbre smoother to the knob to avoid a slew/jump fight.
+        shapeTarget       = shapeRaw;
+        shapeSmoothed     = shapeRaw;
+        lastKnob2ShapeLog = -1.0f;
+    }
+    prevSw2ModifierForLatch = modNow;
+
     if(sw2ModifierActive)
     {
         const bool k3Up = (modifierHarmonics <= 0.0f) ? true : (pitchNorm >= modifierHarmonics);
@@ -810,29 +829,44 @@ void ProcessKnobs()
         return;
     }
 
-    // Musical pitch mapping centered at middle C.
-    const float newFreq = CurrentPitchFrequency(pitchNorm);
-    if(fabsf(newFreq - current.waveformFreq) > 0.2f)
+    if(k1PitchFrozenAfterModifier)
     {
-        const bool k1Up = (lastKnob1LogValue < 0.0f) ? true : (pitchNorm >= lastKnob1LogValue);
-        current.waveformFreq = newFreq;
-        MarkInteraction();
-        TRACE_CTRL_LOG("freq -> %.2f (oct=%d)", current.waveformFreq, octaveShift);
-        if(octaveChangedPending)
+        if(fabsf(pitchNorm - k1NormLatchOnModifierExit) > kPitchRearmMove)
         {
-            // Switch press already emitted its own single-line feedback.
-            octaveChangedPending = false;
+            k1PitchFrozenAfterModifier = false;
         }
         else
         {
-            LogKnobFeedback(k1Up ? "k1  up" : "k1  down");
+            lastKnob1LogValue = pitchNorm;
         }
-        lastKnob1LogValue = pitchNorm;
-        DebugStatusNow("freq");
     }
-    else
+
+    // Musical pitch mapping centered at middle C.
+    if(!k1PitchFrozenAfterModifier)
     {
-        lastKnob1LogValue = pitchNorm;
+        const float newFreq = CurrentPitchFrequency(pitchNorm);
+        if(fabsf(newFreq - current.waveformFreq) > 0.2f)
+        {
+            const bool k1Up = (lastKnob1LogValue < 0.0f) ? true : (pitchNorm >= lastKnob1LogValue);
+            current.waveformFreq = newFreq;
+            MarkInteraction();
+            TRACE_CTRL_LOG("freq -> %.2f (oct=%d)", current.waveformFreq, octaveShift);
+            if(octaveChangedPending)
+            {
+                // Switch press already emitted its own single-line feedback.
+                octaveChangedPending = false;
+            }
+            else
+            {
+                LogKnobFeedback(k1Up ? "k1  up" : "k1  down");
+            }
+            lastKnob1LogValue = pitchNorm;
+            DebugStatusNow("freq");
+        }
+        else
+        {
+            lastKnob1LogValue = pitchNorm;
+        }
     }
 
     (void)shapeParam.Process();
