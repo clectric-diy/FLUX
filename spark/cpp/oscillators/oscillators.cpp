@@ -209,6 +209,12 @@ static float ApplyWaveWarmth(float input, float timbre)
     return tanhf(colored * kWaveWarmthDrive);
 }
 
+template <size_t N>
+static const char* NameFromTable(const char* const (&table)[N], int index, const char* fallback)
+{
+    return (index >= 0 && index < static_cast<int>(N)) ? table[index] : fallback;
+}
+
 static float CurrentModelOutputGain(const SparkSettings& current)
 {
     if(current.sparkMode == MODE_WAVEFORMS)
@@ -240,6 +246,33 @@ static float CurrentModelOutputGain(const SparkSettings& current)
     }
 }
 
+static const char* const kWaveModelNames[WAVE_COUNT] = {
+    "Sine",
+    "Tri",
+    "Saw",
+    "Square",
+    "Ramp",
+    "SuperSaw",
+};
+
+static const char* const kMacroAModelNames[MACRO_A_COUNT] = {
+    "VarSaw",
+    "VarShape",
+    "FM2",
+    "Formant",
+    "Harmonic",
+    "ZOsc",
+};
+
+static const char* const kMacroBModelNames[MACRO_B_COUNT] = {
+    "Vosim",
+    "String",
+    "Particle",
+    "Grainlet",
+    "Drive",
+    "Kick",
+};
+
 static const char* ModeName(int mode)
 {
     switch(mode)
@@ -264,44 +297,17 @@ static const char* BankDisplayName(int mode)
 
 static const char* WaveName(int waveform)
 {
-    switch(waveform)
-    {
-        case WAVE_SIN: return "Sine";
-        case WAVE_POLYBLEP_TRI: return "Tri";
-        case WAVE_POLYBLEP_SAW: return "Saw";
-        case WAVE_POLYBLEP_SQUARE: return "Square";
-        case WAVE_RAMP: return "Ramp";
-        case WAVE_SUPERSAW: return "SuperSaw";
-        default: return "Wave?";
-    }
+    return NameFromTable(kWaveModelNames, waveform, "Wave?");
 }
 
 static const char* MacroAName(int macroA)
 {
-    switch(macroA)
-    {
-        case MACRO_A_VARIABLE_SAW: return "VarSaw";
-        case MACRO_A_VARIABLE_SHAPE: return "VarShape";
-        case MACRO_A_FM2: return "FM2";
-        case MACRO_A_FORMANT: return "Formant";
-        case MACRO_A_HARMONIC: return "Harmonic";
-        case MACRO_A_ZOSC: return "ZOsc";
-        default: return "MacroA?";
-    }
+    return NameFromTable(kMacroAModelNames, macroA, "MacroA?");
 }
 
 static const char* MacroBName(int macroB)
 {
-    switch(macroB)
-    {
-        case MACRO_B_VOSIM: return "Vosim";
-        case MACRO_B_STRING: return "String";
-        case MACRO_B_PARTICLE: return "Particle";
-        case MACRO_B_RING_MOD_NOISE: return "Grainlet";
-        case MACRO_B_OVERDRIVE: return "Drive";
-        case MACRO_B_BASS_DRUM_CLICK: return "Kick";
-        default: return "MacroB?";
-    }
+    return NameFromTable(kMacroBModelNames, macroB, "MacroB?");
 }
 
 static const char* CurrentModelName(const SparkSettings& current)
