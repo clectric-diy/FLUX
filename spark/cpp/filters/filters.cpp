@@ -156,6 +156,7 @@ int main(void)
     storage.Init(defaults);
 
     spark.SetAudioBlockSize(4);
+    spark.StartAdc();
     sampleRate = spark.AudioSampleRate();
     osc.Init(sampleRate);
     osc.SetAmp(1.0f);
