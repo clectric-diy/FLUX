@@ -26,6 +26,14 @@ static const auto SAVE_DELAY_MS       = 3000U;
 static float      sampleRate          = 48000.0f;
 static float      drumPhase           = 0.0f;
 static bool       encoderTurnedWhilePressed = false;
+static bool       i2cScanPrinted            = false;
+static Spark::LedCalibration kOnboardLedCalibration = {
+    0.45f, // global_gain
+    1.00f, // red_gain
+    1.00f, // green_gain
+    1.00f, // blue_gain
+    1.80f  // gamma
+};
 
 enum SparkModes {
     MODE_WAVEFORMS = 0,
@@ -83,7 +91,7 @@ PersistentStorage<SparkSettings> storage(spark.seed.qspi);
 #endif
 
 #ifndef SPARK_DEBUG_DEFAULT_LEVEL
-#define SPARK_DEBUG_DEFAULT_LEVEL 3
+#define SPARK_DEBUG_DEFAULT_LEVEL 2
 #endif
 
 #ifndef SPARK_DEBUG_DEFAULT_MASK
@@ -91,7 +99,7 @@ PersistentStorage<SparkSettings> storage(spark.seed.qspi);
 #endif
 
 #ifndef SPARK_DEBUG_STATUS_INTERVAL_MS
-#define SPARK_DEBUG_STATUS_INTERVAL_MS 250U
+#define SPARK_DEBUG_STATUS_INTERVAL_MS 1000U
 #endif
 
 static const char* ModeName(int mode)
@@ -103,6 +111,31 @@ static const char* ModeName(int mode)
         case MODE_MACRO_B: return "macroB";
         default: return "unknown";
     }
+}
+
+struct RgbColor
+{
+    float r;
+    float g;
+    float b;
+};
+
+// ROYGBIV palette with red intentionally moved to the end:
+// orange, yellow, green, blue, indigo, violet, red
+static constexpr RgbColor kRoygbivRedLast[] = {
+    {1.00f, 0.35f, 0.00f}, // orange
+    {0.90f, 0.80f, 0.00f}, // yellow
+    {0.00f, 0.90f, 0.00f}, // green
+    {0.00f, 0.25f, 1.00f}, // blue
+    {0.20f, 0.00f, 0.70f}, // indigo
+    {0.55f, 0.00f, 0.75f}, // violet
+    {0.90f, 0.00f, 0.00f}, // red (last)
+};
+
+static RgbColor PaletteColor(int index)
+{
+    const int paletteCount = static_cast<int>(sizeof(kRoygbivRedLast) / sizeof(kRoygbivRedLast[0]));
+    return kRoygbivRedLast[WrapIndex(index, paletteCount)];
 }
 
 static void DebugLog(uint8_t level, uint8_t category, const char* format, ...)
@@ -130,6 +163,45 @@ static void DebugInit()
              "spark debug on: level=%d mask=0x%02x",
              diagnostics.Level(),
              diagnostics.Mask());
+
+    // I2C scan is printed later (after USB CDC attach) from the main loop.
+#endif
+}
+
+static void DebugMaybePrintI2cScan()
+{
+#if SPARK_DEBUG_ENABLE
+    if(i2cScanPrinted || System::GetNow() < 2000U)
+    {
+        return;
+    }
+
+    i2cScanPrinted = true;
+    spark.seed.PrintLine("");
+    spark.seed.PrintLine("---- delayed i2c scan ----");
+
+    if(!spark.InitPeripheralI2c())
+    {
+        spark.seed.PrintLine("i2c scan: peripheral I2C init failed");
+        spark.seed.PrintLine("--------------------------");
+        return;
+    }
+
+    uint8_t found[16];
+    const uint8_t count = spark.ScanI2cDevices(found, 16);
+    if(count == 0)
+    {
+        spark.seed.PrintLine("i2c scan: no devices found on peripheral bus");
+    }
+    else
+    {
+        spark.seed.PrintLine("i2c scan: %d device(s) found", count);
+        for(uint8_t i = 0; i < count; i++)
+        {
+            spark.seed.PrintLine("i2c addr: 0x%02x", found[i]);
+        }
+    }
+    spark.seed.PrintLine("--------------------------");
 #endif
 }
 
@@ -141,16 +213,16 @@ static void DebugMaybeStatus()
     }
 
     SparkSettings& current = storage.GetSettings();
-    diagnostics.LogStatusLine(ModeName(current.sparkMode),
-                              current.waveform,
-                              current.macroA,
-                              current.macroB,
-                              current.waveformFreq,
-                              spark.knob1.Value(),
-                              spark.knob2.Value(),
-                              spark.encoder.Pressed(),
-                              spark.button1.Pressed(),
-                              spark.button2.Pressed());
+    diagnostics.RefreshStatusLine(ModeName(current.sparkMode),
+                                  current.waveform,
+                                  current.macroA,
+                                  current.macroB,
+                                  current.waveformFreq,
+                                  spark.knob1.Value(),
+                                  spark.knob2.Value(),
+                                  spark.encoder.Pressed(),
+                                  spark.button1.Pressed(),
+                                  spark.button2.Pressed());
 }
 
 static void ProcessDebugButtons()
@@ -169,16 +241,37 @@ static void MarkInteraction()
 static void UpdateLeds()
 {
     SparkSettings& current = storage.GetSettings();
-    const float    modeMix = static_cast<float>(current.sparkMode) / static_cast<float>(MODE_COUNT - 1);
-    const float    idxMix
-        = (current.sparkMode == MODE_WAVEFORMS)
-              ? static_cast<float>(current.waveform) / static_cast<float>(WAVE_COUNT - 1)
-          : (current.sparkMode == MODE_MACRO_A)
-              ? static_cast<float>(current.macroA) / static_cast<float>(MACRO_A_COUNT - 1)
-              : static_cast<float>(current.macroB) / static_cast<float>(MACRO_B_COUNT - 1);
+    const int modeColorIndex = (current.sparkMode == MODE_WAVEFORMS)
+                                   ? 0
+                               : (current.sparkMode == MODE_MACRO_A) ? 2
+                                                                       : 4;
+    const int itemColorIndex = (current.sparkMode == MODE_WAVEFORMS)
+                                   ? current.waveform
+                               : (current.sparkMode == MODE_MACRO_A) ? current.macroA
+                                                                       : current.macroB;
 
-    spark.led1.Set(modeMix, 0.1f, 1.0f - modeMix);
-    spark.led2.Set(idxMix, 1.0f - idxMix, 0.2f);
+    const RgbColor modeColor = PaletteColor(modeColorIndex);
+    const RgbColor itemColor = PaletteColor(itemColorIndex);
+    float led1r, led1g, led1b;
+    spark.ApplyLedCalibration(Spark::LedTarget::Onboard,
+                              modeColor.r * 0.28f,
+                              modeColor.g * 0.28f,
+                              modeColor.b * 0.28f,
+                              led1r,
+                              led1g,
+                              led1b);
+
+    float led2r, led2g, led2b;
+    spark.ApplyLedCalibration(Spark::LedTarget::Onboard,
+                              itemColor.r * 0.45f,
+                              itemColor.g * 0.45f,
+                              itemColor.b * 0.45f,
+                              led2r,
+                              led2g,
+                              led2b);
+
+    spark.led1.Set(led1r, led1g, led1b);
+    spark.led2.Set(led2r, led2g, led2b);
     spark.UpdateLeds();
 }
 
@@ -381,6 +474,7 @@ int main(void) {
     synthBassDrum.Init(sampleRate);
     grainlet.Init(sampleRate);
     overdrive.Init();
+    spark.SetLedCalibration(Spark::LedTarget::Onboard, kOnboardLedCalibration);
     DebugInit();
 
     freqParam.Init(spark.knob1, 20.0f, 2000.0f, Parameter::LOGARITHMIC);
@@ -395,6 +489,7 @@ int main(void) {
         ProcessKnobs();
         UpdateLeds();
         ProcessDebugButtons();
+        DebugMaybePrintI2cScan();
         DebugMaybeStatus();
 
         if(runtime.MaybeSave(storage, SAVE_DELAY_MS))
