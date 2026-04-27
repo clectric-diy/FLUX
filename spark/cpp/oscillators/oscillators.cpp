@@ -1,5 +1,7 @@
 #include "daisysp.h"
 #include "daisy_spark.h"
+#include <cstdarg>
+#include <cstdio>
 
 using namespace daisy;
 using namespace daisysp;
@@ -24,6 +26,7 @@ static const auto SAVE_DELAY_MS       = 3000U;
 static float      sampleRate          = 48000.0f;
 static float      drumPhase           = 0.0f;
 static bool       encoderTurnedWhilePressed = false;
+static uint32_t   lastDebugStatusMs   = 0;
 
 enum SparkModes {
     MODE_WAVEFORMS = 0,
@@ -76,6 +79,121 @@ struct SparkSettings {
 
 PersistentStorage<SparkSettings> storage(spark.seed.qspi);
 
+#ifndef SPARK_DEBUG_ENABLE
+#define SPARK_DEBUG_ENABLE 1
+#endif
+
+#ifndef SPARK_DEBUG_DEFAULT_LEVEL
+#define SPARK_DEBUG_DEFAULT_LEVEL 2
+#endif
+
+#ifndef SPARK_DEBUG_DEFAULT_MASK
+#define SPARK_DEBUG_DEFAULT_MASK 0x0F
+#endif
+
+#ifndef SPARK_DEBUG_STATUS_INTERVAL_MS
+#define SPARK_DEBUG_STATUS_INTERVAL_MS 1000U
+#endif
+
+enum DebugLevel {
+    DBG_OFF   = 0,
+    DBG_ERROR = 1,
+    DBG_INFO  = 2,
+    DBG_TRACE = 3
+};
+
+enum DebugCategoryMask : uint8_t {
+    DBG_CAT_CTRL    = 1 << 0,
+    DBG_CAT_AUDIO   = 1 << 1,
+    DBG_CAT_STATE   = 1 << 2,
+    DBG_CAT_STORAGE = 1 << 3
+};
+
+static uint8_t debugLevel = SPARK_DEBUG_DEFAULT_LEVEL;
+static uint8_t debugMask  = SPARK_DEBUG_DEFAULT_MASK;
+
+static const char* ModeName(int mode)
+{
+    switch(mode)
+    {
+        case MODE_WAVEFORMS: return "wave";
+        case MODE_MACRO_A: return "macroA";
+        case MODE_MACRO_B: return "macroB";
+        default: return "unknown";
+    }
+}
+
+static void DebugLog(uint8_t level, uint8_t category, const char* format, ...)
+{
+#if SPARK_DEBUG_ENABLE
+    if(level > debugLevel || (debugMask & category) == 0)
+    {
+        return;
+    }
+
+    char    line[192];
+    va_list args;
+    va_start(args, format);
+    vsnprintf(line, sizeof(line), format, args);
+    va_end(args);
+    spark.seed.PrintLine("%s", line);
+#else
+    (void)level;
+    (void)category;
+    (void)format;
+#endif
+}
+
+static void DebugInit()
+{
+#if SPARK_DEBUG_ENABLE
+    spark.seed.StartLog();
+    DebugLog(DBG_INFO, DBG_CAT_STATE, "spark debug on: level=%d mask=0x%02x", debugLevel, debugMask);
+#endif
+}
+
+static void DebugMaybeStatus()
+{
+    const uint32_t now = System::GetNow();
+    if(now - lastDebugStatusMs < SPARK_DEBUG_STATUS_INTERVAL_MS)
+    {
+        return;
+    }
+    lastDebugStatusMs = now;
+
+    SparkSettings& current = storage.GetSettings();
+    DebugLog(DBG_TRACE,
+             DBG_CAT_STATE,
+             "status mode=%s wf=%d a=%d b=%d freq=%.2f shape=%.2f",
+             ModeName(current.sparkMode),
+             current.waveform,
+             current.macroA,
+             current.macroB,
+             current.waveformFreq,
+             shapeParam.Value());
+}
+
+static void ProcessDebugButtons()
+{
+#if SPARK_DEBUG_ENABLE
+    if(spark.button1.FallingEdge())
+    {
+        debugLevel = (debugLevel + 1) % 4;
+        DebugLog(DBG_INFO, DBG_CAT_STATE, "debug level -> %d (0=off,1=err,2=info,3=trace)", debugLevel);
+    }
+
+    if(spark.button2.FallingEdge())
+    {
+        debugMask <<= 1;
+        if(debugMask == 0 || debugMask > 0x08)
+        {
+            debugMask = 0x01;
+        }
+        DebugLog(DBG_INFO, DBG_CAT_STATE, "debug mask -> 0x%02x", debugMask);
+    }
+#endif
+}
+
 static inline int WrapIndex(int value, int count)
 {
     while(value >= count)
@@ -93,6 +211,7 @@ static void MarkInteraction()
 {
     saveNeeded          = true;
     lastInteractionTime = System::GetNow();
+    DebugLog(DBG_TRACE, DBG_CAT_CTRL, "interaction marked");
 }
 
 static void UpdateLeds()
@@ -127,20 +246,24 @@ void ProcessEncoder()
         {
             current.sparkMode = WrapIndex(current.sparkMode + static_cast<int>(inc), MODE_COUNT);
             encoderTurnedWhilePressed = true;
+            DebugLog(DBG_INFO, DBG_CAT_CTRL, "bank -> %s", ModeName(current.sparkMode));
         }
         else
         {
             if(current.sparkMode == MODE_WAVEFORMS)
             {
                 current.waveform = WrapIndex(current.waveform + static_cast<int>(inc), WAVE_COUNT);
+                DebugLog(DBG_INFO, DBG_CAT_CTRL, "waveform -> %d", current.waveform);
             }
             else if(current.sparkMode == MODE_MACRO_A)
             {
                 current.macroA = WrapIndex(current.macroA + static_cast<int>(inc), MACRO_A_COUNT);
+                DebugLog(DBG_INFO, DBG_CAT_CTRL, "macroA -> %d", current.macroA);
             }
             else
             {
                 current.macroB = WrapIndex(current.macroB + static_cast<int>(inc), MACRO_B_COUNT);
+                DebugLog(DBG_INFO, DBG_CAT_CTRL, "macroB -> %d", current.macroB);
             }
         }
         MarkInteraction();
@@ -151,11 +274,13 @@ void ProcessEncoder()
         if(current.sparkMode == MODE_MACRO_A && current.macroA == MACRO_A_STRING)
         {
             stringVoice.Trig();
+            DebugLog(DBG_INFO, DBG_CAT_CTRL, "string trig");
         }
         else if(current.sparkMode == MODE_MACRO_B
                 && current.macroB == MACRO_B_BASS_DRUM_CLICK)
         {
             synthBassDrum.Trig();
+            DebugLog(DBG_INFO, DBG_CAT_CTRL, "drum trig");
         }
     }
 }
@@ -168,6 +293,7 @@ void ProcessKnobs()
     {
         current.waveformFreq = newFreq;
         MarkInteraction();
+        DebugLog(DBG_TRACE, DBG_CAT_CTRL, "freq -> %.2f", current.waveformFreq);
     }
 
     (void)shapeParam.Process();
@@ -303,6 +429,8 @@ int main(void) {
     synthBassDrum.Init(sampleRate);
     grainlet.Init(sampleRate);
     overdrive.Init();
+    DebugInit();
+    lastDebugStatusMs = System::GetNow();
 
     freqParam.Init(spark.knob1, 20.0f, 2000.0f, Parameter::LOGARITHMIC);
     shapeParam.Init(spark.knob2, 0.0f, 1.0f, Parameter::LINEAR);
@@ -315,6 +443,8 @@ int main(void) {
         ProcessEncoder();
         ProcessKnobs();
         UpdateLeds();
+        ProcessDebugButtons();
+        DebugMaybeStatus();
 
         if(saveNeeded)
         {
@@ -322,6 +452,7 @@ int main(void) {
             {
                 storage.Save();
                 saveNeeded = false;
+                DebugLog(DBG_INFO, DBG_CAT_STORAGE, "settings saved");
             }
         }
     }
