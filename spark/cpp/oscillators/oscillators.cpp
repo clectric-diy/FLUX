@@ -125,10 +125,8 @@ static constexpr float kKnob1Min = 0.00f;
 static constexpr float kKnob1Max = 0.96f;
 static constexpr float kKnob2Min = 0.00f;
 static constexpr float kKnob2Max = 0.96f;
-static float            controlParam1 = 0.0f;
-static float            controlParam2 = 0.0f;
-static float            controlParam3 = 0.0f;
-static float            controlParam4 = 0.0f;
+static float            modifierHarmonics = 0.0f;
+static float            modifierMorph = 0.0f;
 static uint32_t         sw2PressStartMs = 0;
 static bool             sw2ModifierActive = false;
 
@@ -280,8 +278,8 @@ static void LogModifierFeedback(const char* source)
                     DBG_CAT_CTRL,
                     "%sharmonics=%d%% morph=%d%%",
                     label,
-                    ParamPct(controlParam3),
-                    ParamPct(controlParam4));
+                    ParamPct(modifierHarmonics),
+                    ParamPct(modifierMorph));
 }
 
 static void LogModifierState(const char* state)
@@ -291,8 +289,8 @@ static void LogModifierState(const char* state)
                     "%-10smod=%s harmonics=%d%% morph=%d%%",
                     "sw2 hold",
                     state,
-                    ParamPct(controlParam3),
-                    ParamPct(controlParam4));
+                    ParamPct(modifierHarmonics),
+                    ParamPct(modifierMorph));
 }
 
 static void LogSwitchFeedback(const char* switch_name)
@@ -563,19 +561,19 @@ void ProcessKnobs()
 
     if(sw2ModifierActive)
     {
-        const bool k3Up = (controlParam3 <= 0.0f) ? true : (pitchNorm >= controlParam3);
-        const bool k4Up = (controlParam4 <= 0.0f) ? true : (shapeRaw >= controlParam4);
+        const bool k3Up = (modifierHarmonics <= 0.0f) ? true : (pitchNorm >= modifierHarmonics);
+        const bool k4Up = (modifierMorph <= 0.0f) ? true : (shapeRaw >= modifierMorph);
         bool       changed = false;
 
-        if(fabsf(pitchNorm - controlParam3) > 0.01f)
+        if(fabsf(pitchNorm - modifierHarmonics) > 0.01f)
         {
-            controlParam3 = pitchNorm;
+            modifierHarmonics = pitchNorm;
             changed    = true;
             LogModifierFeedback(k3Up ? "k3  up" : "k3  down");
         }
-        if(fabsf(shapeRaw - controlParam4) > 0.01f)
+        if(fabsf(shapeRaw - modifierMorph) > 0.01f)
         {
-            controlParam4 = shapeRaw;
+            modifierMorph = shapeRaw;
             changed    = true;
             LogModifierFeedback(k4Up ? "k4  up" : "k4  down");
         }
@@ -586,9 +584,6 @@ void ProcessKnobs()
         }
         return;
     }
-
-    controlParam1 = pitchNorm;
-    controlParam2 = shapeRaw;
 
     // Musical pitch mapping centered at middle C.
     float semitones = ((pitchNorm * 2.0f) - 1.0f) * static_cast<float>(kKnobSemitoneSpan)
@@ -651,8 +646,8 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
     (void)in;
     SparkSettings& current = storage.GetSettings();
     const float    shape   = CurrentShapeValue();
-    const float    p3      = controlParam3;
-    const float    p4      = controlParam4;
+    const float    p3      = modifierHarmonics;
+    const float    p4      = modifierMorph;
 
     osc.SetFreq(current.waveformFreq);
 
