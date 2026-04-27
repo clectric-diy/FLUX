@@ -246,6 +246,63 @@ static float CurrentModelOutputGain(const SparkSettings& current)
     }
 }
 
+struct ModelControls
+{
+    float timbre;
+    float harmonics;
+    float morph;
+};
+
+static ModelControls CurvedControls(const SparkSettings& current,
+                                    float                timbre,
+                                    float                harmonics,
+                                    float                morph)
+{
+    ModelControls out = {timbre, harmonics, morph};
+
+    if(current.sparkMode == MODE_WAVEFORMS)
+    {
+        out.timbre = powf(timbre, 0.85f);
+        return out;
+    }
+
+    if(current.sparkMode == MODE_MACRO_A)
+    {
+        switch(current.macroA)
+        {
+            case MACRO_A_FM2:
+                out.timbre    = powf(timbre, 1.40f);
+                out.harmonics = powf(harmonics, 0.80f);
+                out.morph     = powf(morph, 1.25f);
+                break;
+            case MACRO_A_HARMONIC:
+                out.timbre    = (timbre * 2.0f) - 1.0f;
+                out.harmonics = powf(harmonics, 0.90f);
+                out.morph     = powf(morph, 1.35f);
+                break;
+            case MACRO_A_FORMANT:
+            case MACRO_A_ZOSC:
+                out.harmonics = powf(harmonics, 0.75f);
+                out.morph     = powf(morph, 1.10f);
+                break;
+            default: break;
+        }
+        return out;
+    }
+
+    switch(current.macroB)
+    {
+        case MACRO_B_OVERDRIVE:
+            out.timbre = powf(timbre, 1.35f);
+            break;
+        case MACRO_B_BASS_DRUM_CLICK:
+            out.timbre = powf(timbre, 0.85f);
+            break;
+        default: break;
+    }
+    return out;
+}
+
 static const char* const kWaveModelNames[WAVE_COUNT] = {
     "Sine",
     "Tri",
@@ -770,9 +827,13 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
 {
     (void)in;
     SparkSettings& current = storage.GetSettings();
-    const float    shape   = CurrentShapeValue();
-    const float    p3      = modifierHarmonics;
-    const float    p4      = modifierMorph;
+    const float    timbreIn = CurrentShapeValue();
+    const float    p3       = modifierHarmonics;
+    const float    p4       = modifierMorph;
+    const ModelControls controls = CurvedControls(current, timbreIn, p3, p4);
+    const float         timbre   = controls.timbre;
+    const float         harmonics = controls.harmonics;
+    const float         morph     = controls.morph;
 
     osc.SetFreq(current.waveformFreq);
 
@@ -788,27 +849,27 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
                     // Sine-to-triangle tilt for useful low-harmonic shaping.
                     osc.SetWaveform(Oscillator::WAVE_SIN);
                     sig = osc.Process();
-                    sig = ((1.0f - shape) * sig) + (shape * asinf(sig) * (2.0f / PI_F));
+                    sig = ((1.0f - timbre) * sig) + (timbre * asinf(sig) * (2.0f / PI_F));
                     break;
                 case WAVE_POLYBLEP_TRI:
                     osc.SetWaveform(Oscillator::WAVE_POLYBLEP_TRI);
-                    osc.SetPw(0.5f + ((shape - 0.5f) * 0.3f));
+                    osc.SetPw(0.5f + ((timbre - 0.5f) * 0.3f));
                     sig = osc.Process();
                     break;
                 case WAVE_POLYBLEP_SAW:
                     osc.SetWaveform(Oscillator::WAVE_POLYBLEP_SAW);
-                    osc.SetPw(0.3f + (shape * 0.4f));
+                    osc.SetPw(0.3f + (timbre * 0.4f));
                     sig = osc.Process();
                     break;
                 case WAVE_RAMP:
                     osc.SetWaveform(Oscillator::WAVE_RAMP);
-                    osc.SetPw(0.3f + (shape * 0.4f));
+                    osc.SetPw(0.3f + (timbre * 0.4f));
                     sig = -1.0f * osc.Process();
                     break;
                 case WAVE_SUPERSAW:
                 {
-                    const float detune = 0.002f + (p3 * 0.035f);
-                    const float spread = 0.55f + (p4 * 0.45f);
+                    const float detune = 0.002f + (harmonics * 0.035f);
+                    const float spread = 0.55f + (morph * 0.45f);
                     const float f0 = current.waveformFreq;
                     osc.SetWaveform(Oscillator::WAVE_POLYBLEP_SAW);
                     supersawLow.SetFreq(f0 * (1.0f - detune));
@@ -824,13 +885,13 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
                 case WAVE_POLYBLEP_SQUARE:
                 default:
                     osc.SetWaveform(Oscillator::WAVE_POLYBLEP_SQUARE);
-                    osc.SetPw(0.05f + (shape * 0.90f));
+                    osc.SetPw(0.05f + (timbre * 0.90f));
                     sig = osc.Process();
                     break;
             }
             // Subtle "Moog-ish" contour for the classic wave bank:
             // slight low-pass smoothing + soft saturation.
-            sig = ApplyWaveWarmth(sig, shape);
+            sig = ApplyWaveWarmth(sig, timbreIn);
         }
         else if(current.sparkMode == MODE_MACRO_A)
         {
@@ -838,53 +899,53 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
             {
                 case MACRO_A_VARIABLE_SAW:
                     variableSaw.SetFreq(current.waveformFreq);
-                    variableSaw.SetPW(((shape * 2.0f) - 1.0f) * (0.4f + (p3 * 0.6f)));
-                    variableSaw.SetWaveshape((shape * (1.0f - (p4 * 0.5f))) + (p4 * 0.5f));
+                    variableSaw.SetPW(((timbre * 2.0f) - 1.0f) * (0.4f + (harmonics * 0.6f)));
+                    variableSaw.SetWaveshape((timbre * (1.0f - (morph * 0.5f))) + (morph * 0.5f));
                     sig = variableSaw.Process();
                     break;
 
                 case MACRO_A_FM2:
                     fm2.SetFrequency(current.waveformFreq);
-                    fm2.SetRatio(0.25f + (p3 * 7.75f));
-                    fm2.SetIndex(0.05f + (shape * (0.95f + (p4 * 8.0f))));
+                    fm2.SetRatio(0.25f + (harmonics * 7.75f));
+                    fm2.SetIndex(0.05f + (timbre * (0.95f + (morph * 8.0f))));
                     sig = fm2.Process();
                     break;
 
                 case MACRO_A_FORMANT:
                     formantOsc.SetCarrierFreq(current.waveformFreq);
-                    formantOsc.SetFormantFreq(current.waveformFreq * (1.0f + (shape * (2.0f + (p3 * 6.0f)))));
-                    formantOsc.SetPhaseShift((p4 * 2.0f) - 1.0f);
+                    formantOsc.SetFormantFreq(current.waveformFreq * (1.0f + (timbre * (2.0f + (harmonics * 6.0f)))));
+                    formantOsc.SetPhaseShift((morph * 2.0f) - 1.0f);
                     sig = formantOsc.Process();
                     break;
 
                 case MACRO_A_ZOSC:
                     zOsc.SetFreq(current.waveformFreq);
-                    zOsc.SetFormantFreq(current.waveformFreq * (1.0f + (shape * (2.0f + (p3 * 6.0f)))));
-                    zOsc.SetShape((shape * 0.7f) + (p4 * 0.3f));
-                    zOsc.SetMode((p4 * 2.0f) - 1.0f);
+                    zOsc.SetFormantFreq(current.waveformFreq * (1.0f + (timbre * (2.0f + (harmonics * 6.0f)))));
+                    zOsc.SetShape((timbre * 0.7f) + (morph * 0.3f));
+                    zOsc.SetMode((morph * 2.0f) - 1.0f);
                     sig = zOsc.Process();
                     break;
 
                 case MACRO_A_VARIABLE_SHAPE:
                     variableShape.SetFreq(current.waveformFreq);
-                    variableShape.SetPW(0.02f + (shape * 0.96f));
-                    variableShape.SetWaveshape((shape * 0.65f) + (p3 * 0.35f));
+                    variableShape.SetPW(0.02f + (timbre * 0.96f));
+                    variableShape.SetWaveshape((timbre * 0.65f) + (harmonics * 0.35f));
                     variableShape.SetSync(true);
-                    variableShape.SetSyncFreq(current.waveformFreq * (0.25f + (p4 * 7.75f)));
+                    variableShape.SetSyncFreq(current.waveformFreq * (0.25f + (morph * 7.75f)));
                     sig = variableShape.Process();
                     break;
 
                 case MACRO_A_HARMONIC:
                 {
                     harmonicOsc.SetFreq(current.waveformFreq);
-                    harmonicOsc.SetFirstHarmIdx(1 + static_cast<int>(p3 * 6.0f));
+                    harmonicOsc.SetFirstHarmIdx(1 + static_cast<int>(harmonics * 6.0f));
                     float amps[8];
-                    const float tilt = (shape * 2.0f) - 1.0f;
+                    const float tilt = timbre;
                     float sum = 0.0f;
                     for(int h = 0; h < 8; ++h)
                     {
                         const float rank = static_cast<float>(h + 1);
-                        float       a    = powf(rank, -(1.0f + (p4 * 2.0f)));
+                        float       a    = powf(rank, -(1.0f + (morph * 2.0f)));
                         a *= (tilt >= 0.0f) ? powf(rank, -tilt) : powf(rank, fabsf(tilt));
                         amps[h] = a;
                         sum += a;
@@ -910,43 +971,43 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
             {
                 case MACRO_B_VOSIM:
                     vosim.SetFreq(current.waveformFreq);
-                    vosim.SetForm1Freq(current.waveformFreq * (1.0f + (shape * (1.0f + (p3 * 3.0f)))));
-                    vosim.SetForm2Freq(current.waveformFreq * (2.0f + (shape * (2.0f + (p4 * 6.0f)))));
-                    vosim.SetShape(((shape * 2.0f) - 1.0f) * (0.35f + (p3 * 0.65f)));
+                    vosim.SetForm1Freq(current.waveformFreq * (1.0f + (timbre * (1.0f + (harmonics * 3.0f)))));
+                    vosim.SetForm2Freq(current.waveformFreq * (2.0f + (timbre * (2.0f + (morph * 6.0f)))));
+                    vosim.SetShape(((timbre * 2.0f) - 1.0f) * (0.35f + (harmonics * 0.65f)));
                     sig = vosim.Process();
                     break;
 
                 case MACRO_B_STRING:
                     stringVoice.SetSustain(true);
                     stringVoice.SetFreq(current.waveformFreq);
-                    stringVoice.SetAccent(0.35f + (p3 * 0.65f));
-                    stringVoice.SetStructure((shape * 0.7f) + (p3 * 0.3f));
-                    stringVoice.SetBrightness((shape * 0.6f) + (p4 * 0.4f));
-                    stringVoice.SetDamping(1.0f - (((shape * 0.65f) + (p4 * 0.35f)) * 0.8f));
+                    stringVoice.SetAccent(0.35f + (harmonics * 0.65f));
+                    stringVoice.SetStructure((timbre * 0.7f) + (harmonics * 0.3f));
+                    stringVoice.SetBrightness((timbre * 0.6f) + (morph * 0.4f));
+                    stringVoice.SetDamping(1.0f - (((timbre * 0.65f) + (morph * 0.35f)) * 0.8f));
                     sig = stringVoice.Process(false);
                     break;
 
                 case MACRO_B_PARTICLE:
                     particle.SetFreq(current.waveformFreq);
-                    particle.SetResonance(0.2f + (shape * 0.75f));
-                    particle.SetDensity(shape);
-                    particle.SetRandomFreq(0.4f + (shape * 12.0f));
-                    particle.SetSpread(4.0f * shape);
+                    particle.SetResonance(0.2f + (timbre * 0.75f));
+                    particle.SetDensity(timbre);
+                    particle.SetRandomFreq(0.4f + (timbre * 12.0f));
+                    particle.SetSpread(4.0f * timbre);
                     particle.SetGain(0.75f);
                     sig = particle.Process();
                     break;
 
                 case MACRO_B_RING_MOD_NOISE:
                     grainlet.SetFreq(current.waveformFreq);
-                    grainlet.SetFormantFreq(current.waveformFreq * (2.0f + (shape * 6.0f)));
-                    grainlet.SetShape(0.2f + (shape * 2.0f));
-                    grainlet.SetBleed(shape);
+                    grainlet.SetFormantFreq(current.waveformFreq * (2.0f + (timbre * 6.0f)));
+                    grainlet.SetShape(0.2f + (timbre * 2.0f));
+                    grainlet.SetBleed(timbre);
                     sig = grainlet.Process();
                     break;
 
                 case MACRO_B_OVERDRIVE:
                     osc.SetWaveform(Oscillator::WAVE_SAW);
-                    overdrive.SetDrive(shape);
+                    overdrive.SetDrive(timbre);
                     sig = overdrive.Process(osc.Process());
                     break;
 
@@ -960,11 +1021,11 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
                         trig = true;
                     }
                     synthBassDrum.SetFreq(fmaxf(20.0f, current.waveformFreq));
-                    synthBassDrum.SetTone(shape);
-                    synthBassDrum.SetDecay(0.2f + (shape * 0.8f));
-                    synthBassDrum.SetDirtiness(shape);
-                    synthBassDrum.SetFmEnvelopeAmount(shape);
-                    synthBassDrum.SetFmEnvelopeDecay(shape);
+                    synthBassDrum.SetTone(timbre);
+                    synthBassDrum.SetDecay(0.2f + (timbre * 0.8f));
+                    synthBassDrum.SetDirtiness(timbre);
+                    synthBassDrum.SetFmEnvelopeAmount(timbre);
+                    synthBassDrum.SetFmEnvelopeDecay(timbre);
                     sig = synthBassDrum.Process(trig);
                     break;
                 }
