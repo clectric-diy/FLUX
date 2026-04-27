@@ -54,7 +54,7 @@ static void DebugInit()
     diagnostics.Log(DBG_INFO, DBG_CAT_STATE, "effects scaffold ready");
 }
 
-static void DebugStatus()
+static void DebugMaybeStatus()
 {
     if(!diagnostics.StatusDue(SPARK_DEBUG_STATUS_INTERVAL_MS))
     {
@@ -62,16 +62,16 @@ static void DebugStatus()
     }
 
     EffectsSettings& current = storage.GetSettings();
-    diagnostics.LogStatusLine("effects",
-                              current.model,
-                              0,
-                              0,
-                              current.oscFreq,
-                              spark.knob1.Value(),
-                              spark.knob2.Value(),
-                              spark.encoder.Pressed(),
-                              spark.button1.Pressed(),
-                              spark.button2.Pressed());
+    diagnostics.RefreshStatusLine("effects",
+                                  current.model,
+                                  0,
+                                  0,
+                                  current.oscFreq,
+                                  spark.knob1.Value(),
+                                  spark.knob2.Value(),
+                                  spark.encoder.Pressed(),
+                                  spark.button1.Pressed(),
+                                  spark.button2.Pressed());
 }
 
 static void ProcessControls()
@@ -151,7 +151,7 @@ int main(void)
         runtime.ProcessControls();
         runtime.ProcessDebugButtons();
         ProcessControls();
-        DebugStatus();
+        DebugMaybeStatus();
 
         if(runtime.MaybeSave(storage, SAVE_DELAY_MS))
         {
