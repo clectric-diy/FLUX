@@ -296,23 +296,21 @@ void SparkDiagnostics::CycleSingleMask()
     }
 }
 
-void SparkRuntime::ProcessDebugButtons(uint8_t& debug_level, uint8_t& debug_mask)
+void SparkRuntime::ProcessDebugButtons()
 {
     if(spark_.button1.FallingEdge())
     {
         diagnostics_.CycleLevel();
-        debug_level = diagnostics_.Level();
         diagnostics_.Log(DBG_INFO,
                          DBG_CAT_STATE,
                          "debug level -> %d (0=off,1=err,2=info,3=trace)",
-                         debug_level);
+                         diagnostics_.Level());
     }
 
     if(spark_.button2.FallingEdge())
     {
         diagnostics_.CycleSingleMask();
-        debug_mask = diagnostics_.Mask();
-        diagnostics_.Log(DBG_INFO, DBG_CAT_STATE, "debug mask -> 0x%02x", debug_mask);
+        diagnostics_.Log(DBG_INFO, DBG_CAT_STATE, "debug mask -> 0x%02x", diagnostics_.Mask());
     }
 }
 

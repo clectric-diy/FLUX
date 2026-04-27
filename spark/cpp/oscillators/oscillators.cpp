@@ -94,9 +94,6 @@ PersistentStorage<SparkSettings> storage(spark.seed.qspi);
 #define SPARK_DEBUG_STATUS_INTERVAL_MS 250U
 #endif
 
-static uint8_t debugLevel = SPARK_DEBUG_DEFAULT_LEVEL;
-static uint8_t debugMask  = SPARK_DEBUG_DEFAULT_MASK;
-
 static const char* ModeName(int mode)
 {
     switch(mode)
@@ -127,8 +124,12 @@ static void DebugLog(uint8_t level, uint8_t category, const char* format, ...)
 static void DebugInit()
 {
 #if SPARK_DEBUG_ENABLE
-    diagnostics.Init(debugLevel, debugMask, "oscillators");
-    DebugLog(DBG_INFO, DBG_CAT_STATE, "spark debug on: level=%d mask=0x%02x", debugLevel, debugMask);
+    diagnostics.Init(SPARK_DEBUG_DEFAULT_LEVEL, SPARK_DEBUG_DEFAULT_MASK, "oscillators");
+    DebugLog(DBG_INFO,
+             DBG_CAT_STATE,
+             "spark debug on: level=%d mask=0x%02x",
+             diagnostics.Level(),
+             diagnostics.Mask());
 #endif
 }
 
@@ -155,7 +156,7 @@ static void DebugMaybeStatus()
 static void ProcessDebugButtons()
 {
 #if SPARK_DEBUG_ENABLE
-    runtime.ProcessDebugButtons(debugLevel, debugMask);
+    runtime.ProcessDebugButtons();
 #endif
 }
 

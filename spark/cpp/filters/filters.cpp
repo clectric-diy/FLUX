@@ -1,8 +1,5 @@
 #include "daisysp.h"
 #include "daisy_spark.h"
-#include <cstdarg>
-#include <cstdio>
-
 using namespace daisy;
 using namespace daisysp;
 using namespace daisy_spark;
@@ -43,10 +40,6 @@ struct FilterSettings
 
 PersistentStorage<FilterSettings> storage(spark.seed.qspi);
 
-#ifndef SPARK_DEBUG_ENABLE
-#define SPARK_DEBUG_ENABLE 1
-#endif
-
 #ifndef SPARK_DEBUG_DEFAULT_LEVEL
 #define SPARK_DEBUG_DEFAULT_LEVEL 2
 #endif
@@ -59,31 +52,10 @@ PersistentStorage<FilterSettings> storage(spark.seed.qspi);
 #define SPARK_DEBUG_STATUS_INTERVAL_MS 500U
 #endif
 
-static uint8_t debugLevel = SPARK_DEBUG_DEFAULT_LEVEL;
-static uint8_t debugMask  = SPARK_DEBUG_DEFAULT_MASK;
-
-static void DebugLog(uint8_t level, uint8_t category, const char* format, ...)
-{
-#if SPARK_DEBUG_ENABLE
-    char    line[192];
-    va_list args;
-    va_start(args, format);
-    vsnprintf(line, sizeof(line), format, args);
-    va_end(args);
-    diagnostics.Log(level, category, "%s", line);
-#else
-    (void)level;
-    (void)category;
-    (void)format;
-#endif
-}
-
 static void DebugInit()
 {
-#if SPARK_DEBUG_ENABLE
-    diagnostics.Init(debugLevel, debugMask, "filters");
-    DebugLog(DBG_INFO, DBG_CAT_STATE, "filters scaffold ready");
-#endif
+    diagnostics.Init(SPARK_DEBUG_DEFAULT_LEVEL, SPARK_DEBUG_DEFAULT_MASK, "filters");
+    diagnostics.Log(DBG_INFO, DBG_CAT_STATE, "filters scaffold ready");
 }
 
 static void DebugStatus()
@@ -113,7 +85,7 @@ static void ProcessControls()
     {
         current.model = WrapIndex(current.model + static_cast<int>(inc), FILTER_COUNT);
         runtime.MarkInteraction();
-        DebugLog(DBG_INFO, DBG_CAT_CTRL, "filter model -> %d", current.model);
+        diagnostics.Log(DBG_INFO, DBG_CAT_CTRL, "filter model -> %d", current.model);
     }
 
     const float newFreq = freqParam.Process();
@@ -191,13 +163,13 @@ int main(void)
     while(1)
     {
         runtime.ProcessControls();
-        runtime.ProcessDebugButtons(debugLevel, debugMask);
+        runtime.ProcessDebugButtons();
         ProcessControls();
         DebugStatus();
 
         if(runtime.MaybeSave(storage, SAVE_DELAY_MS))
         {
-            DebugLog(DBG_INFO, DBG_CAT_STORAGE, "filters settings saved");
+            diagnostics.Log(DBG_INFO, DBG_CAT_STORAGE, "filters settings saved");
         }
     }
 }

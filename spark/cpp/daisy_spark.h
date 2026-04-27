@@ -200,7 +200,7 @@ class SparkRuntime
     }
 
     void ProcessControls() { spark_.ProcessAllControls(); }
-    void ProcessDebugButtons(uint8_t& debug_level, uint8_t& debug_mask);
+    void ProcessDebugButtons();
     void MarkInteraction();
     bool IsDirty() const { return dirty_; }
 
