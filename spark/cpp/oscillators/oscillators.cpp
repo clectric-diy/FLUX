@@ -148,6 +148,8 @@ static constexpr float kWaveWarmthTimbreAlphaSpan = 0.045f;
 static constexpr float kWaveWarmthDrive = 1.30f;
 static constexpr float kWaveWarmthWet = 0.35f;
 static constexpr float kWaveOutputGain = 0.78f;
+static constexpr float kFinalLimiterDrive = 1.15f;
+static constexpr float kFinalLimiterMakeup = 0.92f;
 static float            modifierHarmonics = 0.0f;
 static float            modifierMorph = 0.0f;
 static uint32_t         sw2PressStartMs = 0;
@@ -207,6 +209,11 @@ static float ApplyWaveWarmth(float input, float timbre)
     waveWarmthState += alpha * (input - waveWarmthState);
     const float colored = ((1.0f - kWaveWarmthWet) * input) + (kWaveWarmthWet * waveWarmthState);
     return tanhf(colored * kWaveWarmthDrive);
+}
+
+static float ApplyFinalLimiter(float input)
+{
+    return tanhf(input * kFinalLimiterDrive) * kFinalLimiterMakeup;
 }
 
 template <size_t N>
@@ -1037,8 +1044,9 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
         }
 
         const float modelGain = CurrentModelOutputGain(current);
-        out[0][i]             = sig * modelGain;
-        out[1][i]             = sig * modelGain;
+        const float voiced    = ApplyFinalLimiter(sig * modelGain);
+        out[0][i]             = voiced;
+        out[1][i]             = voiced;
     }
 }
 
