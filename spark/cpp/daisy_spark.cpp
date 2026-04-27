@@ -3,6 +3,10 @@
 #include <cstdarg>
 #include <cstdio>
 
+#ifndef SPARK_DIAG_BANNER
+#define SPARK_DIAG_BANNER 1
+#endif
+
 #ifndef SAMPLE_RATE
 //#define SAMPLE_RATE DSY_AUDIO_SAMPLE_RATE
 #define SAMPLE_RATE 48014.f
@@ -205,6 +209,75 @@ void Spark::UpdateLeds()
     led2.Update();
 }
 
+void Spark::ConfigureEncoderI2cRgb(uint8_t                 device_addr7,
+                                   Spark::EncoderI2cRgbFormat format,
+                                   uint8_t                 reg_or_cmd)
+{
+    encoder_i2c_addr7_  = (format == Spark::EncoderI2cRgbFormat::Disabled) ? 0U : device_addr7;
+    encoder_i2c_format_   = format;
+    encoder_i2c_reg_     = reg_or_cmd;
+    encoder_i2c_last_r8_ = 0xFF;
+    encoder_i2c_last_g8_ = 0xFF;
+    encoder_i2c_last_b8_ = 0xFF;
+}
+
+void Spark::SetEncoderI2cRgb(float r, float g, float b)
+{
+    if(encoder_i2c_format_ == Spark::EncoderI2cRgbFormat::Disabled || encoder_i2c_addr7_ == 0U)
+    {
+        return;
+    }
+    if(!peripheral_i2c_ready_ && !InitPeripheralI2c())
+    {
+        return;
+    }
+    float cr, cg, cb;
+    ApplyLedCalibration(LedTarget::Encoder, r, g, b, cr, cg, cb);
+    const auto toByte = [](float u) {
+        return static_cast<uint8_t>(fminf(255.0f, fmaxf(0.0f, u * 255.0f + 0.5f)));
+    };
+    const uint8_t r8 = toByte(cr);
+    const uint8_t g8 = toByte(cg);
+    const uint8_t b8 = toByte(cb);
+    if(r8 == encoder_i2c_last_r8_ && g8 == encoder_i2c_last_g8_ && b8 == encoder_i2c_last_b8_)
+    {
+        return;
+    }
+    encoder_i2c_last_r8_ = r8;
+    encoder_i2c_last_g8_ = g8;
+    encoder_i2c_last_b8_ = b8;
+
+    I2CHandle::Result st = I2CHandle::Result::ERR;
+    const uint8_t     addr7 = encoder_i2c_addr7_ & 0x7F;
+
+    switch(encoder_i2c_format_)
+    {
+        case Spark::EncoderI2cRgbFormat::Rgb8Only:
+        {
+            uint8_t buf[3] = {r8, g8, b8};
+            st             = peripheral_i2c.TransmitBlocking(addr7, buf, 3, 20);
+        }
+        break;
+        case Spark::EncoderI2cRgbFormat::Reg8ThenRgb8:
+        {
+            uint8_t buf[4] = {encoder_i2c_reg_, r8, g8, b8};
+            st             = peripheral_i2c.TransmitBlocking(addr7, buf, 4, 20);
+        }
+        break;
+        case Spark::EncoderI2cRgbFormat::Reg8WriteDataAtAddressRgb8:
+        {
+            uint8_t         rgb[3] = {r8, g8, b8};
+            const uint16_t regw = static_cast<uint16_t>(encoder_i2c_reg_);
+            st
+                = peripheral_i2c.WriteDataAtAddress(addr7, regw, 1, rgb, 3, 20);
+        }
+        break;
+        case Spark::EncoderI2cRgbFormat::Disabled:
+        default: break;
+    }
+    (void)st;
+}
+
 void Spark::SetLedCalibration(LedTarget target, const LedCalibration& calibration)
 {
     if(target == LedTarget::Encoder)
@@ -305,7 +378,11 @@ void SparkDiagnostics::Init(uint8_t level, uint8_t mask, const char* firmware_na
     level_ = level;
     mask_  = mask;
     spark_.seed.StartLog();
+#if SPARK_DIAG_BANNER
     PrintBanner(firmware_name);
+#else
+    (void)firmware_name;
+#endif
 }
 
 void SparkDiagnostics::PrintBanner(const char* firmware_name)

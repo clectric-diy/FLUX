@@ -147,6 +147,31 @@ class Spark
     /** Initialize I2C bus for onboard peripheral discovery/control. */
     bool InitPeripheralI2c();
 
+    /** How to send 8-bit RGB to the encoder LED driver over \ref peripheral_i2c. */
+    enum class EncoderI2cRgbFormat : uint8_t
+    {
+        Disabled = 0,
+        /** One transaction: 3 bytes [R, G, B]. */
+        Rgb8Only,
+        /** One transaction: 4 bytes [reg, R, G, B]. */
+        Reg8ThenRgb8,
+        /** I2C write: 8-bit register, then 3 data bytes (common; adjust reg per datasheet). */
+        Reg8WriteDataAtAddressRgb8
+    };
+
+    /**
+        Enable RGB updates to an I2C LED in front of the PEL12T (or similar).
+        @param device_addr7 7-bit I2C address; use 0 or format Disabled to turn off.
+        @param format Wire format; match your driver datasheet.
+        @param reg_or_cmd Sub-address / register byte (used when format is not Rgb8Only).
+    */
+    void ConfigureEncoderI2cRgb(uint8_t device_addr7, EncoderI2cRgbFormat format, uint8_t reg_or_cmd = 0x00);
+
+    /**
+        Push 0-1 linear RGB; applies @ref LedTarget::Encoder calibration, then I2C if configured.
+    */
+    void SetEncoderI2cRgb(float r, float g, float b);
+
     /** Scan 7-bit I2C addresses and return number of responsive devices. */
     uint8_t ScanI2cDevices(uint8_t* out_addresses,
                            uint8_t  max_addresses,
@@ -197,8 +222,14 @@ class Spark
     static float Clamp01(float v);
     static float ApplyGamma(float v, float gamma);
 
-    LedCalibration onboard_led_calibration_;
-    LedCalibration encoder_led_calibration_;
+    LedCalibration         onboard_led_calibration_;
+    LedCalibration         encoder_led_calibration_;
+    uint8_t                encoder_i2c_addr7_ = 0;
+    EncoderI2cRgbFormat    encoder_i2c_format_   = EncoderI2cRgbFormat::Disabled;
+    uint8_t                encoder_i2c_reg_   = 0x00;
+    uint8_t                encoder_i2c_last_r8_ = 0xFF;
+    uint8_t                encoder_i2c_last_g8_ = 0xFF;
+    uint8_t                encoder_i2c_last_b8_ = 0xFF;
 };
 
 /** Shared diagnostics helper for Spark firmware variants (oscillators/effects/filters). */
