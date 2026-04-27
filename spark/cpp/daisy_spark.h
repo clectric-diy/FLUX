@@ -210,6 +210,7 @@ class SparkDiagnostics
     void Init(uint8_t level, uint8_t mask, const char* firmware_name);
     void PrintBanner(const char* firmware_name);
     void Log(uint8_t level, uint8_t category, const char* format, ...);
+    void LogModelChange(const char* domain, int model_index, const char* model_name);
     void LogStatusLine(const char* mode_name,
                        int         primary_index,
                        int         secondary_a,
@@ -230,6 +231,7 @@ class SparkDiagnostics
                            bool        encoder_pressed,
                            bool        button1_pressed,
                            bool        button2_pressed);
+    void RefreshCustomStatusLine(const char* line, uint8_t pad_width = 72);
     void LogHeartbeat(const char* firmware_name, uint32_t interval_ms = 1000);
     bool StatusDue(uint32_t interval_ms);
     uint8_t Level() const { return level_; }
@@ -290,6 +292,12 @@ inline int WrapIndex(int value, int count)
         value += count;
     }
     return value;
+}
+
+template <size_t N>
+inline const char* NameFromIndex(const char* const (&names)[N], int index, const char* fallback = "unknown")
+{
+    return (index >= 0 && index < static_cast<int>(N)) ? names[index] : fallback;
 }
 
 } // namespace daisy_spark

@@ -335,6 +335,16 @@ void SparkDiagnostics::Log(uint8_t level, uint8_t category, const char* format, 
     spark_.seed.PrintLine("%s", line);
 }
 
+void SparkDiagnostics::LogModelChange(const char* domain, int model_index, const char* model_name)
+{
+    Log(DBG_INFO,
+        DBG_CAT_CTRL,
+        "%s -> %d (%s)",
+        domain,
+        model_index,
+        model_name ? model_name : "unknown");
+}
+
 void SparkDiagnostics::LogStatusLine(const char* mode_name,
                                      int         primary_index,
                                      int         secondary_a,
@@ -398,6 +408,15 @@ void SparkDiagnostics::RefreshStatusLine(const char* mode_name,
     }
     // Redraw the same console line without adding scrollback.
     spark_.seed.Print("\r%-72s", line);
+}
+
+void SparkDiagnostics::RefreshCustomStatusLine(const char* line, uint8_t pad_width)
+{
+    if(DBG_INFO > level_ || (mask_ & DBG_CAT_STATE) == 0)
+    {
+        return;
+    }
+    spark_.seed.Print("\r%-*s", static_cast<int>(pad_width), line ? line : "");
 }
 
 void SparkDiagnostics::LogHeartbeat(const char* firmware_name, uint32_t interval_ms)

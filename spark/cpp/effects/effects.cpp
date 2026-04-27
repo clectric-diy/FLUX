@@ -22,6 +22,11 @@ enum EffectModel
     FX_COUNT
 };
 
+static const char* const kEffectModelNames[FX_COUNT] = {
+    "Bypass",
+    "Overdrive",
+};
+
 struct EffectsSettings
 {
     int   model;
@@ -62,16 +67,14 @@ static void DebugMaybeStatus()
     }
 
     EffectsSettings& current = storage.GetSettings();
-    diagnostics.RefreshStatusLine("effects",
-                                  current.model,
-                                  0,
-                                  0,
-                                  current.oscFreq,
-                                  spark.knob1.Value(),
-                                  spark.knob2.Value(),
-                                  spark.encoder.Pressed(),
-                                  spark.button1.Pressed(),
-                                  spark.button2.Pressed());
+    char line[160];
+    snprintf(line,
+             sizeof(line),
+             "Effects %s freq=%dHz mix=%d%%",
+             NameFromIndex(kEffectModelNames, current.model, "Effect?"),
+             static_cast<int>(current.oscFreq),
+             static_cast<int>(current.mix * 100.0f));
+    diagnostics.RefreshCustomStatusLine(line);
 }
 
 static void ProcessControls()
@@ -82,7 +85,9 @@ static void ProcessControls()
     {
         current.model = WrapIndex(current.model + static_cast<int>(inc), FX_COUNT);
         runtime.MarkInteraction();
-        diagnostics.Log(DBG_INFO, DBG_CAT_CTRL, "effect model -> %d", current.model);
+        diagnostics.LogModelChange("effect model",
+                                   current.model,
+                                   NameFromIndex(kEffectModelNames, current.model, "Effect?"));
     }
 
     const float newFreq = freqParam.Process();

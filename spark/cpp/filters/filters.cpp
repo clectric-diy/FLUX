@@ -26,6 +26,12 @@ enum FilterModel
     FILTER_COUNT
 };
 
+static const char* const kFilterModelNames[FILTER_COUNT] = {
+    "Lowpass",
+    "Highpass",
+    "Bandpass",
+};
+
 struct FilterSettings
 {
     int   model;
@@ -65,16 +71,14 @@ static void DebugMaybeStatus()
         return;
     }
     FilterSettings& current = storage.GetSettings();
-    diagnostics.RefreshStatusLine("filters",
-                                  current.model,
-                                  0,
-                                  0,
-                                  current.oscFreq,
-                                  spark.knob1.Value(),
-                                  spark.knob2.Value(),
-                                  spark.encoder.Pressed(),
-                                  spark.button1.Pressed(),
-                                  spark.button2.Pressed());
+    char line[160];
+    snprintf(line,
+             sizeof(line),
+             "Filters %s freq=%dHz cutoff=%d%%",
+             NameFromIndex(kFilterModelNames, current.model, "Filter?"),
+             static_cast<int>(current.oscFreq),
+             static_cast<int>(current.cutoff * 100.0f));
+    diagnostics.RefreshCustomStatusLine(line);
 }
 
 static void ProcessControls()
@@ -85,7 +89,9 @@ static void ProcessControls()
     {
         current.model = WrapIndex(current.model + static_cast<int>(inc), FILTER_COUNT);
         runtime.MarkInteraction();
-        diagnostics.Log(DBG_INFO, DBG_CAT_CTRL, "filter model -> %d", current.model);
+        diagnostics.LogModelChange("filter model",
+                                   current.model,
+                                   NameFromIndex(kFilterModelNames, current.model, "Filter?"));
     }
 
     const float newFreq = freqParam.Process();
