@@ -316,9 +316,6 @@ void SparkDiagnostics::PrintBanner(const char* firmware_name)
     spark_.seed.PrintLine("- Turn encoder: select waveform/model");
     spark_.seed.PrintLine("- Press+turn encoder: change bank");
     spark_.seed.PrintLine("- Knob1: primary, Knob2: secondary");
-    spark_.seed.PrintLine("Debug controls:");
-    spark_.seed.PrintLine("- Button1: cycle debug level (0 off, 1 err, 2 info, 3 trace)");
-    spark_.seed.PrintLine("- Button2: cycle debug mask/category");
     spark_.seed.PrintLine("Current debug level=%d mask=0x%02x", level_, mask_);
     spark_.seed.PrintLine("========================================");
 }
@@ -425,38 +422,6 @@ bool SparkDiagnostics::StatusDue(uint32_t interval_ms)
     }
     last_status_ms_ = now;
     return true;
-}
-
-void SparkDiagnostics::CycleLevel()
-{
-    level_ = (level_ + 1) % 4;
-}
-
-void SparkDiagnostics::CycleSingleMask()
-{
-    mask_ <<= 1;
-    if(mask_ == 0 || mask_ > DBG_CAT_STORAGE)
-    {
-        mask_ = DBG_CAT_CTRL;
-    }
-}
-
-void SparkRuntime::ProcessDebugButtons()
-{
-    if(spark_.button1.FallingEdge())
-    {
-        diagnostics_.CycleLevel();
-        diagnostics_.Log(DBG_INFO,
-                         DBG_CAT_STATE,
-                         "debug level -> %d (0=off,1=err,2=info,3=trace)",
-                         diagnostics_.Level());
-    }
-
-    if(spark_.button2.FallingEdge())
-    {
-        diagnostics_.CycleSingleMask();
-        diagnostics_.Log(DBG_INFO, DBG_CAT_STATE, "debug mask -> 0x%02x", diagnostics_.Mask());
-    }
 }
 
 void SparkRuntime::MarkInteraction()

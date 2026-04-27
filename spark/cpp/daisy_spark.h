@@ -232,8 +232,6 @@ class SparkDiagnostics
                            bool        button2_pressed);
     void LogHeartbeat(const char* firmware_name, uint32_t interval_ms = 1000);
     bool StatusDue(uint32_t interval_ms);
-    void CycleLevel();
-    void CycleSingleMask();
     uint8_t Level() const { return level_; }
     uint8_t Mask() const { return mask_; }
 
@@ -255,7 +253,6 @@ class SparkRuntime
     }
 
     void ProcessControls() { spark_.ProcessAllControls(); }
-    void ProcessDebugButtons();
     void MarkInteraction();
     bool IsDirty() const { return dirty_; }
 

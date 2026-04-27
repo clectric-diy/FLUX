@@ -225,13 +225,6 @@ static void DebugMaybeStatus()
                                   spark.button2.Pressed());
 }
 
-static void ProcessDebugButtons()
-{
-#if SPARK_DEBUG_ENABLE
-    runtime.ProcessDebugButtons();
-#endif
-}
-
 static void MarkInteraction()
 {
     runtime.MarkInteraction();
@@ -488,7 +481,6 @@ int main(void) {
         ProcessEncoder();
         ProcessKnobs();
         UpdateLeds();
-        ProcessDebugButtons();
         DebugMaybePrintI2cScan();
         DebugMaybeStatus();
 

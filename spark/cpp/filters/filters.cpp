@@ -163,7 +163,6 @@ int main(void)
     while(1)
     {
         runtime.ProcessControls();
-        runtime.ProcessDebugButtons();
         ProcessControls();
         DebugMaybeStatus();
 
