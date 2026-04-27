@@ -12,8 +12,15 @@ static SparkDiagnostics diagnostics(spark);
 static SparkRuntime runtime(spark, diagnostics);
 
 static Oscillator            osc;
+static Oscillator            supersawLow;
+static Oscillator            supersawHigh;
 static VariableSawOscillator variableSaw;
+static VariableShapeOscillator variableShape;
 static VosimOscillator       vosim;
+static FormantOscillator     formantOsc;
+static ZOscillator           zOsc;
+static Fm2                   fm2;
+static HarmonicOscillator<8> harmonicOsc;
 static StringVoice           stringVoice;
 static Particle              particle;
 static SyntheticBassDrum     synthBassDrum;
@@ -25,10 +32,11 @@ static Parameter             shapeParam;
 static const auto SAVE_DELAY_MS       = 3000U;
 static float      sampleRate          = 48000.0f;
 static float      drumPhase           = 0.0f;
+static float      waveWarmthState     = 0.0f;
 static bool       encoderTurnedWhilePressed = false;
 static bool       i2cScanPrinted            = false;
 static uint32_t   lastEncoderPressMs        = 0;
-static int        octaveShift               = 0;
+static int        octaveShift               = -1;
 static bool       octaveChangedPending      = false;
 static float      lastKnob2ShapeLog         = -1.0f;
 static float      lastKnob1LogValue         = -1.0f;
@@ -54,26 +62,32 @@ enum Waveforms {
     WAVE_SIN             = 0,
     WAVE_POLYBLEP_TRI    = 1,
     WAVE_POLYBLEP_SAW    = 2,
-    WAVE_RAMP            = 3,
-    WAVE_POLYBLEP_SQUARE = 4,
-    WAVE_COUNT           = 5
+    WAVE_POLYBLEP_SQUARE = 3,
+    WAVE_RAMP            = 4,
+    WAVE_SUPERSAW        = 5,
+    WAVE_COUNT           = 6
 };
 
 enum MacrosBankA {
     MACRO_A_VARIABLE_SAW = 0,
-    MACRO_A_VOSIM        = 1,
-    MACRO_A_STRING       = 2,
-    MACRO_A_COUNT        = 3
+    MACRO_A_VARIABLE_SHAPE = 1,
+    MACRO_A_FM2            = 2,
+    MACRO_A_FORMANT        = 3,
+    MACRO_A_HARMONIC       = 4,
+    MACRO_A_ZOSC           = 5,
+    MACRO_A_COUNT          = 6
 };
 
 enum MacrosBankB {
-    MACRO_B_PARTICLE        = 0,
-    MACRO_B_BASS_DRUM_CLICK = 1,
+    MACRO_B_VOSIM           = 0,
+    MACRO_B_STRING          = 1,
+    MACRO_B_PARTICLE        = 2,
     // Placeholder name kept for UI/backward compatibility.
     // Implemented with GrainletOscillator until a dedicated ring-mod noise block is added.
-    MACRO_B_RING_MOD_NOISE = 2,
-    MACRO_B_OVERDRIVE      = 3,
-    MACRO_B_COUNT          = 4
+    MACRO_B_RING_MOD_NOISE = 3,
+    MACRO_B_OVERDRIVE      = 4,
+    MACRO_B_BASS_DRUM_CLICK = 5,
+    MACRO_B_COUNT           = 6
 };
 
 struct SparkSettings {
@@ -125,6 +139,10 @@ static constexpr float kKnob1Min = 0.00f;
 static constexpr float kKnob1Max = 0.96f;
 static constexpr float kKnob2Min = 0.00f;
 static constexpr float kKnob2Max = 0.96f;
+static constexpr float kWaveWarmthBaseAlpha = 0.055f;
+static constexpr float kWaveWarmthTimbreAlphaSpan = 0.045f;
+static constexpr float kWaveWarmthDrive = 1.30f;
+static constexpr float kWaveWarmthWet = 0.35f;
 static float            modifierHarmonics = 0.0f;
 static float            modifierMorph = 0.0f;
 static uint32_t         sw2PressStartMs = 0;
@@ -178,6 +196,14 @@ static float CurrentPitchFrequency(float pitchNorm)
     return kMiddleC * powf(2.0f, semitones / 12.0f);
 }
 
+static float ApplyWaveWarmth(float input, float timbre)
+{
+    const float alpha = kWaveWarmthBaseAlpha + (timbre * kWaveWarmthTimbreAlphaSpan);
+    waveWarmthState += alpha * (input - waveWarmthState);
+    const float colored = ((1.0f - kWaveWarmthWet) * input) + (kWaveWarmthWet * waveWarmthState);
+    return tanhf(colored * kWaveWarmthDrive);
+}
+
 static const char* ModeName(int mode)
 {
     switch(mode)
@@ -187,6 +213,93 @@ static const char* ModeName(int mode)
         case MODE_MACRO_B: return "macroB";
         default: return "unknown";
     }
+}
+
+static const char* BankDisplayName(int mode)
+{
+    switch(mode)
+    {
+        case MODE_WAVEFORMS: return "Wave";
+        case MODE_MACRO_A: return "MacroA";
+        case MODE_MACRO_B: return "MacroB";
+        default: return "Unknown";
+    }
+}
+
+static const char* WaveName(int waveform)
+{
+    switch(waveform)
+    {
+        case WAVE_SIN: return "Sine";
+        case WAVE_POLYBLEP_TRI: return "Tri";
+        case WAVE_POLYBLEP_SAW: return "Saw";
+        case WAVE_POLYBLEP_SQUARE: return "Square";
+        case WAVE_RAMP: return "Ramp";
+        case WAVE_SUPERSAW: return "SuperSaw";
+        default: return "Wave?";
+    }
+}
+
+static const char* MacroAName(int macroA)
+{
+    switch(macroA)
+    {
+        case MACRO_A_VARIABLE_SAW: return "VarSaw";
+        case MACRO_A_VARIABLE_SHAPE: return "VarShape";
+        case MACRO_A_FM2: return "FM2";
+        case MACRO_A_FORMANT: return "Formant";
+        case MACRO_A_HARMONIC: return "Harmonic";
+        case MACRO_A_ZOSC: return "ZOsc";
+        default: return "MacroA?";
+    }
+}
+
+static const char* MacroBName(int macroB)
+{
+    switch(macroB)
+    {
+        case MACRO_B_VOSIM: return "Vosim";
+        case MACRO_B_STRING: return "String";
+        case MACRO_B_PARTICLE: return "Particle";
+        case MACRO_B_RING_MOD_NOISE: return "Grainlet";
+        case MACRO_B_OVERDRIVE: return "Drive";
+        case MACRO_B_BASS_DRUM_CLICK: return "Kick";
+        default: return "MacroB?";
+    }
+}
+
+static const char* CurrentModelName(const SparkSettings& current)
+{
+    if(current.sparkMode == MODE_WAVEFORMS)
+    {
+        return WaveName(current.waveform);
+    }
+    if(current.sparkMode == MODE_MACRO_A)
+    {
+        return MacroAName(current.macroA);
+    }
+    return MacroBName(current.macroB);
+}
+
+static int ParamPct(float value);
+
+static void RenderFriendlyStatusLine(const SparkSettings& current)
+{
+    if(DBG_INFO > diagnostics.Level() || (diagnostics.Mask() & DBG_CAT_STATE) == 0)
+    {
+        return;
+    }
+    char line[192];
+    snprintf(line,
+             sizeof(line),
+             "%s %s freq=%dHz timbre=%d%% harmonics=%d%% morph=%d%%",
+             BankDisplayName(current.sparkMode),
+             CurrentModelName(current),
+             static_cast<int>(current.waveformFreq),
+             static_cast<int>(Knob2Calibrated() * 100.0f),
+             ParamPct(modifierHarmonics),
+             ParamPct(modifierMorph));
+    spark.seed.Print("\r%-72s", line);
 }
 
 struct RgbColor
@@ -218,24 +331,7 @@ static void DebugStatusNow(const char* reason)
 {
     SparkSettings& current = storage.GetSettings();
     (void)reason;
-
-    // Force immediate single-line refresh without adding scrollback noise.
-    const float k1 = Knob1Calibrated();
-    const float k2 = Knob2Calibrated();
-    const bool  e  = spark.encoder.Pressed();
-    const bool  b1 = spark.button1.Pressed();
-    const bool  b2 = spark.button2.Pressed();
-
-    diagnostics.RefreshStatusLine(ModeName(current.sparkMode),
-                                  current.waveform,
-                                  current.macroA,
-                                  current.macroB,
-                                  current.waveformFreq,
-                                  k1,
-                                  k2,
-                                  e,
-                                  b1,
-                                  b2);
+    RenderFriendlyStatusLine(current);
 }
 
 static void LogKnobFeedback(const char* source)
@@ -251,13 +347,14 @@ static void LogKnobFeedback(const char* source)
     snprintf(label, sizeof(label), "%-10s", source);
 
     SparkSettings& current = storage.GetSettings();
+    const bool     isK1Event = (source[1] == '1');
+    const int      freqHz    = static_cast<int>(current.waveformFreq);
+    const int      timbrePct = static_cast<int>(Knob2Calibrated() * 100.0f);
     diagnostics.Log(DBG_INFO,
                     DBG_CAT_CTRL,
-                    "%sfreq=%dHz timbre=%d%% oct=%d",
+                    isK1Event ? "%sfreq -> %dHz" : "%stimbre -> %d%%",
                     label,
-                    static_cast<int>(current.waveformFreq),
-                    static_cast<int>(Knob2Calibrated() * 100.0f),
-                    octaveShift);
+                    isK1Event ? freqHz : timbrePct);
 }
 
 static int ParamPct(float value)
@@ -287,38 +384,33 @@ static void LogModifierFeedback(const char* source)
 
     diagnostics.Log(DBG_INFO,
                     DBG_CAT_CTRL,
-                    "%sharmonics=%d%% morph=%d%%",
+                    (source[1] == '3') ? "%sharmonics -> %d%%" : "%smorph -> %d%%",
                     label,
-                    ParamPct(modifierHarmonics),
-                    ParamPct(modifierMorph));
+                    (source[1] == '3') ? ParamPct(modifierHarmonics) : ParamPct(modifierMorph));
 }
 
 static void LogModifierState(const char* state)
 {
     diagnostics.Log(DBG_INFO,
                     DBG_CAT_CTRL,
-                    "%-10smod=%s harmonics=%d%% morph=%d%%",
+                    "%-10smod -> %s",
                     "sw2 hold",
-                    state,
-                    ParamPct(modifierHarmonics),
-                    ParamPct(modifierMorph));
+                    state);
 }
 
 static void LogSwitchFeedback(const char* switch_name)
 {
     const float pitchNorm = Knob1Calibrated();
     const float targetFreq = CurrentPitchFrequency(pitchNorm);
-    const int   shapePct   = static_cast<int>(Knob2Calibrated() * 100.0f);
     char        label[16];
     snprintf(label, sizeof(label), "%s push", switch_name);
 
     diagnostics.Log(DBG_INFO,
                     DBG_CAT_CTRL,
-                    "%-10sfreq=%dHz timbre=%d%% oct=%d",
+                    "%-10soct -> %d freq -> %dHz",
                     label,
-                    static_cast<int>(targetFreq),
-                    shapePct,
-                    octaveShift);
+                    octaveShift,
+                    static_cast<int>(targetFreq));
 }
 
 static void DebugLog(uint8_t level, uint8_t category, const char* format, ...)
@@ -396,16 +488,7 @@ static void DebugMaybeStatus()
     }
 
     SparkSettings& current = storage.GetSettings();
-    diagnostics.RefreshStatusLine(ModeName(current.sparkMode),
-                                  current.waveform,
-                                  current.macroA,
-                                  current.macroB,
-                                  current.waveformFreq,
-                                  Knob1Calibrated(),
-                                  Knob2Calibrated(),
-                                  spark.encoder.Pressed(),
-                                  spark.button1.Pressed(),
-                                  spark.button2.Pressed());
+    RenderFriendlyStatusLine(current);
 }
 
 static void MarkInteraction()
@@ -476,15 +559,15 @@ void ProcessEncoder()
         const char* encDir = (inc > 0) ? "enc up" : "enc down";
         char        encLabel[16];
         snprintf(encLabel, sizeof(encLabel), "%-10s", encDir);
-        // Be tolerant of slight timing jitter between click and first detent.
-        const bool bankSelectActive
-            = spark.encoder.Pressed() || ((nowMs - lastEncoderPressMs) <= kBankSwitchGraceMs);
+        // Temporary workaround while encoder click is unavailable:
+        // use sw2 as the modifier for bank selection while turning encoder.
+        const bool bankSelectActive = spark.button2.Pressed();
         DebugLog(DBG_TRACE,
                  DBG_CAT_CTRL,
-                 "encoder turn inc=%ld pressed=%d grace_ms=%lu bank=%d",
+                 "encoder turn inc=%ld enc=%d sw2=%d bank=%d",
                  static_cast<long>(inc),
                  spark.encoder.Pressed() ? 1 : 0,
-                 static_cast<unsigned long>(nowMs - lastEncoderPressMs),
+                 spark.button2.Pressed() ? 1 : 0,
                  bankSelectActive ? 1 : 0);
 
         if(bankSelectActive)
@@ -493,12 +576,9 @@ void ProcessEncoder()
             encoderTurnedWhilePressed = true;
             diagnostics.Log(DBG_INFO,
                             DBG_CAT_CTRL,
-                            "%sbank=%s wf=%d a=%d b=%d",
+                            "%smode -> %s",
                             encLabel,
-                            ModeName(current.sparkMode),
-                            current.waveform,
-                            current.macroA,
-                            current.macroB);
+                            ModeName(current.sparkMode));
             DebugStatusNow("bank");
         }
         else
@@ -508,9 +588,8 @@ void ProcessEncoder()
                 current.waveform = WrapIndex(current.waveform + static_cast<int>(inc), WAVE_COUNT);
                 diagnostics.Log(DBG_INFO,
                                 DBG_CAT_CTRL,
-                                "%smode=%s wave=%d",
+                                "%swave -> %d",
                                 encLabel,
-                                ModeName(current.sparkMode),
                                 current.waveform);
                 DebugStatusNow("wave");
             }
@@ -519,9 +598,8 @@ void ProcessEncoder()
                 current.macroA = WrapIndex(current.macroA + static_cast<int>(inc), MACRO_A_COUNT);
                 diagnostics.Log(DBG_INFO,
                                 DBG_CAT_CTRL,
-                                "%smode=%s macroA=%d",
+                                "%smacroA -> %d",
                                 encLabel,
-                                ModeName(current.sparkMode),
                                 current.macroA);
                 DebugStatusNow("macroA");
             }
@@ -530,9 +608,8 @@ void ProcessEncoder()
                 current.macroB = WrapIndex(current.macroB + static_cast<int>(inc), MACRO_B_COUNT);
                 diagnostics.Log(DBG_INFO,
                                 DBG_CAT_CTRL,
-                                "%smode=%s macroB=%d",
+                                "%smacroB -> %d",
                                 encLabel,
-                                ModeName(current.sparkMode),
                                 current.macroB);
                 DebugStatusNow("macroB");
             }
@@ -542,7 +619,7 @@ void ProcessEncoder()
 
     if(spark.encoder.FallingEdge() && !encoderTurnedWhilePressed)
     {
-        if(current.sparkMode == MODE_MACRO_A && current.macroA == MACRO_A_STRING)
+        if(current.sparkMode == MODE_MACRO_B && current.macroB == MACRO_B_STRING)
         {
             stringVoice.Trig();
             DebugLog(DBG_INFO, DBG_CAT_CTRL, "string trig");
@@ -679,6 +756,22 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
                     osc.SetPw(0.3f + (shape * 0.4f));
                     sig = -1.0f * osc.Process();
                     break;
+                case WAVE_SUPERSAW:
+                {
+                    const float detune = 0.002f + (p3 * 0.035f);
+                    const float spread = 0.55f + (p4 * 0.45f);
+                    const float f0 = current.waveformFreq;
+                    osc.SetWaveform(Oscillator::WAVE_POLYBLEP_SAW);
+                    supersawLow.SetFreq(f0 * (1.0f - detune));
+                    supersawHigh.SetFreq(f0 * (1.0f + detune));
+                    const float center = osc.Process();
+                    const float low = supersawLow.Process();
+                    const float high = supersawHigh.Process();
+                    const float mix = (center * (1.0f - (spread * 0.35f)))
+                                      + ((low + high) * (0.5f * spread * 0.90f));
+                    sig = mix;
+                    break;
+                }
                 case WAVE_POLYBLEP_SQUARE:
                 default:
                     osc.SetWaveform(Oscillator::WAVE_POLYBLEP_SQUARE);
@@ -686,6 +779,9 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
                     sig = osc.Process();
                     break;
             }
+            // Subtle "Moog-ish" contour for the classic wave bank:
+            // slight low-pass smoothing + soft saturation.
+            sig = ApplyWaveWarmth(sig, shape);
         }
         else if(current.sparkMode == MODE_MACRO_A)
         {
@@ -698,7 +794,72 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
                     sig = variableSaw.Process();
                     break;
 
-                case MACRO_A_VOSIM:
+                case MACRO_A_FM2:
+                    fm2.SetFrequency(current.waveformFreq);
+                    fm2.SetRatio(0.25f + (p3 * 7.75f));
+                    fm2.SetIndex(0.05f + (shape * (0.95f + (p4 * 8.0f))));
+                    sig = fm2.Process();
+                    break;
+
+                case MACRO_A_FORMANT:
+                    formantOsc.SetCarrierFreq(current.waveformFreq);
+                    formantOsc.SetFormantFreq(current.waveformFreq * (1.0f + (shape * (2.0f + (p3 * 6.0f)))));
+                    formantOsc.SetPhaseShift((p4 * 2.0f) - 1.0f);
+                    sig = formantOsc.Process();
+                    break;
+
+                case MACRO_A_ZOSC:
+                    zOsc.SetFreq(current.waveformFreq);
+                    zOsc.SetFormantFreq(current.waveformFreq * (1.0f + (shape * (2.0f + (p3 * 6.0f)))));
+                    zOsc.SetShape((shape * 0.7f) + (p4 * 0.3f));
+                    zOsc.SetMode((p4 * 2.0f) - 1.0f);
+                    sig = zOsc.Process();
+                    break;
+
+                case MACRO_A_VARIABLE_SHAPE:
+                    variableShape.SetFreq(current.waveformFreq);
+                    variableShape.SetPW(0.02f + (shape * 0.96f));
+                    variableShape.SetWaveshape((shape * 0.65f) + (p3 * 0.35f));
+                    variableShape.SetSync(true);
+                    variableShape.SetSyncFreq(current.waveformFreq * (0.25f + (p4 * 7.75f)));
+                    sig = variableShape.Process();
+                    break;
+
+                case MACRO_A_HARMONIC:
+                {
+                    harmonicOsc.SetFreq(current.waveformFreq);
+                    harmonicOsc.SetFirstHarmIdx(1 + static_cast<int>(p3 * 6.0f));
+                    float amps[8];
+                    const float tilt = (shape * 2.0f) - 1.0f;
+                    float sum = 0.0f;
+                    for(int h = 0; h < 8; ++h)
+                    {
+                        const float rank = static_cast<float>(h + 1);
+                        float       a    = powf(rank, -(1.0f + (p4 * 2.0f)));
+                        a *= (tilt >= 0.0f) ? powf(rank, -tilt) : powf(rank, fabsf(tilt));
+                        amps[h] = a;
+                        sum += a;
+                    }
+                    const float norm = (sum > 0.0f) ? (0.9f / sum) : 1.0f;
+                    for(int h = 0; h < 8; ++h)
+                    {
+                        amps[h] *= norm;
+                    }
+                    harmonicOsc.SetAmplitudes(amps);
+                    sig = harmonicOsc.Process();
+                    break;
+                }
+
+                default:
+                    sig = 0.0f;
+                    break;
+            }
+        }
+        else
+        {
+            switch(current.macroB)
+            {
+                case MACRO_B_VOSIM:
                     vosim.SetFreq(current.waveformFreq);
                     vosim.SetForm1Freq(current.waveformFreq * (1.0f + (shape * (1.0f + (p3 * 3.0f)))));
                     vosim.SetForm2Freq(current.waveformFreq * (2.0f + (shape * (2.0f + (p4 * 6.0f)))));
@@ -706,8 +867,7 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
                     sig = vosim.Process();
                     break;
 
-                case MACRO_A_STRING:
-                default:
+                case MACRO_B_STRING:
                     stringVoice.SetSustain(true);
                     stringVoice.SetFreq(current.waveformFreq);
                     stringVoice.SetAccent(0.35f + (p3 * 0.65f));
@@ -716,12 +876,7 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
                     stringVoice.SetDamping(1.0f - (((shape * 0.65f) + (p4 * 0.35f)) * 0.8f));
                     sig = stringVoice.Process(false);
                     break;
-            }
-        }
-        else
-        {
-            switch(current.macroB)
-            {
+
                 case MACRO_B_PARTICLE:
                     particle.SetFreq(current.waveformFreq);
                     particle.SetResonance(0.2f + (shape * 0.75f));
@@ -730,6 +885,20 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
                     particle.SetSpread(4.0f * shape);
                     particle.SetGain(0.75f);
                     sig = particle.Process();
+                    break;
+
+                case MACRO_B_RING_MOD_NOISE:
+                    grainlet.SetFreq(current.waveformFreq);
+                    grainlet.SetFormantFreq(current.waveformFreq * (2.0f + (shape * 6.0f)));
+                    grainlet.SetShape(0.2f + (shape * 2.0f));
+                    grainlet.SetBleed(shape);
+                    sig = grainlet.Process();
+                    break;
+
+                case MACRO_B_OVERDRIVE:
+                    osc.SetWaveform(Oscillator::WAVE_SAW);
+                    overdrive.SetDrive(shape);
+                    sig = overdrive.Process(osc.Process());
                     break;
 
                 case MACRO_B_BASS_DRUM_CLICK:
@@ -751,19 +920,8 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
                     break;
                 }
 
-                case MACRO_B_RING_MOD_NOISE:
-                    grainlet.SetFreq(current.waveformFreq);
-                    grainlet.SetFormantFreq(current.waveformFreq * (2.0f + (shape * 6.0f)));
-                    grainlet.SetShape(0.2f + (shape * 2.0f));
-                    grainlet.SetBleed(shape);
-                    sig = grainlet.Process();
-                    break;
-
-                case MACRO_B_OVERDRIVE:
                 default:
-                    osc.SetWaveform(Oscillator::WAVE_SAW);
-                    overdrive.SetDrive(shape);
-                    sig = overdrive.Process(osc.Process());
+                    sig = 0.0f;
                     break;
             }
         }
@@ -781,22 +939,35 @@ int main(void) {
     System::Delay(500);
 
     SparkSettings defaultSettings;
-    defaultSettings.sparkMode    = MODE_MACRO_A;
-    defaultSettings.waveform     = WAVE_SIN;
-    defaultSettings.waveformFreq = 261.63f;
+    defaultSettings.sparkMode    = MODE_WAVEFORMS;
+    defaultSettings.waveform     = WAVE_POLYBLEP_SAW;
+    defaultSettings.waveformFreq = 110.0f;
     defaultSettings.macroA = 0;
     defaultSettings.macroB = 0;
 
     storage.Init(defaultSettings);
-    // Encoder click is currently unavailable, so force startup to bank 2 (macroA).
-    storage.GetSettings().sparkMode = MODE_MACRO_A;
+    // Startup voice: classic saw in Wave bank for a more Moog-like baseline.
+    storage.GetSettings().sparkMode = MODE_WAVEFORMS;
+    storage.GetSettings().macroA    = WrapIndex(storage.GetSettings().macroA, MACRO_A_COUNT);
+    storage.GetSettings().macroB    = WrapIndex(storage.GetSettings().macroB, MACRO_B_COUNT);
     spark.SetAudioBlockSize(4);
     sampleRate = spark.AudioSampleRate();
 
     osc.Init(sampleRate);
     osc.SetAmp(1.0f);
+    supersawLow.Init(sampleRate);
+    supersawLow.SetAmp(1.0f);
+    supersawLow.SetWaveform(Oscillator::WAVE_POLYBLEP_SAW);
+    supersawHigh.Init(sampleRate);
+    supersawHigh.SetAmp(1.0f);
+    supersawHigh.SetWaveform(Oscillator::WAVE_POLYBLEP_SAW);
     variableSaw.Init(sampleRate);
+    variableShape.Init(sampleRate);
     vosim.Init(sampleRate);
+    formantOsc.Init(sampleRate);
+    zOsc.Init(sampleRate);
+    fm2.Init(sampleRate);
+    harmonicOsc.Init(sampleRate);
     stringVoice.Init(sampleRate);
     particle.Init(sampleRate);
     synthBassDrum.Init(sampleRate);
