@@ -32,11 +32,10 @@ static Parameter             shapeParam;
 static const auto SAVE_DELAY_MS       = 3000U;
 static float      sampleRate          = 48000.0f;
 static float      drumPhase           = 0.0f;
-static float      waveWarmthState     = 0.0f;
 static bool       encoderTurnedWhilePressed = false;
 static bool       i2cScanPrinted            = false;
 static uint32_t   lastEncoderPressMs        = 0;
-static int        octaveShift               = -1;
+static int        octaveShift               = 0;
 static bool       octaveChangedPending      = false;
 static float      lastKnob2ShapeLog         = -1.0f;
 static float      lastKnob1LogValue         = -1.0f;
@@ -147,19 +146,13 @@ static constexpr float kKnob1Min = 0.00f;
 static constexpr float kKnob1Max = 0.96f;
 static constexpr float kKnob2Min = 0.00f;
 static constexpr float kKnob2Max = 0.96f;
-static constexpr float kWaveWarmthBaseAlpha = 0.055f;
-static constexpr float kWaveWarmthTimbreAlphaSpan = 0.045f;
-static constexpr float kWaveWarmthDrive = 1.30f;
-static constexpr float kWaveWarmthWet = 0.35f;
-static constexpr float kWaveOutputGain = 0.78f;
-static constexpr float kWaveGainSine = 1.0000f;   // 3.90V reference
-static constexpr float kWaveGainTri = 1.0183f;    // 3.90 / 3.83
-static constexpr float kWaveGainSaw = 1.0541f;    // 3.90 / 3.70
-static constexpr float kWaveGainSquare = 1.1607f; // 3.90 / 3.36
-static constexpr float kWaveGainRamp = 1.0236f;   // 3.90 / 3.81
-static constexpr float kWaveGainSuperSaw = 1.1304f; // 3.90 / midpoint(3.45)
-static constexpr float kFinalLimiterDrive = 1.15f;
-static constexpr float kFinalLimiterMakeup = 0.92f;
+static constexpr float kWaveOutputGain = 0.68f;
+static constexpr float kWaveGainSine = 1.0000f;
+static constexpr float kWaveGainTri = 1.0307f;      // 4.37 / 4.24
+static constexpr float kWaveGainSaw = 1.0069f;      // 4.37 / 4.34
+static constexpr float kWaveGainSquare = 1.3571f;   // 4.37 / 3.22
+static constexpr float kWaveGainRamp = 0.9541f;     // 4.37 / 4.58
+static constexpr float kWaveGainSuperSaw = 0.9440f; // reduced to tame beat peaks (4.87V -> ~4.37V target)
 static float            modifierHarmonics = 0.0f;
 static float            modifierMorph = 0.0f;
 static uint32_t         sw2PressStartMs = 0;
@@ -213,17 +206,9 @@ static float CurrentPitchFrequency(float pitchNorm)
     return kMiddleC * powf(2.0f, semitones / 12.0f);
 }
 
-static float ApplyWaveWarmth(float input, float timbre)
-{
-    const float alpha = kWaveWarmthBaseAlpha + (timbre * kWaveWarmthTimbreAlphaSpan);
-    waveWarmthState += alpha * (input - waveWarmthState);
-    const float colored = ((1.0f - kWaveWarmthWet) * input) + (kWaveWarmthWet * waveWarmthState);
-    return tanhf(colored * kWaveWarmthDrive);
-}
-
 static float ApplyFinalLimiter(float input)
 {
-    return tanhf(input * kFinalLimiterDrive) * kFinalLimiterMakeup;
+    return input;
 }
 
 template <size_t N>
@@ -882,7 +867,6 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
                     // Sine-to-triangle tilt for useful low-harmonic shaping.
                     osc.SetWaveform(Oscillator::WAVE_SIN);
                     sig = osc.Process();
-                    sig = ((1.0f - timbre) * sig) + (timbre * asinf(sig) * (2.0f / PI_F));
                     break;
                 case WAVE_POLYBLEP_TRI:
                     osc.SetWaveform(Oscillator::WAVE_POLYBLEP_TRI);
@@ -897,7 +881,7 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
                 case WAVE_RAMP:
                     osc.SetWaveform(Oscillator::WAVE_RAMP);
                     osc.SetPw(0.3f + (timbre * 0.4f));
-                    sig = -1.0f * osc.Process();
+                    sig = osc.Process();
                     break;
                 case WAVE_SUPERSAW:
                 {
@@ -916,15 +900,21 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
                     break;
                 }
                 case WAVE_POLYBLEP_SQUARE:
+                    // Naive square for sharper scope edges; scale to match polyBLEP peak (~0.707)
+                    // so existing kWaveGainSquare stays close. Expect more aliasing at high pitch.
+                    osc.SetWaveform(Oscillator::WAVE_SQUARE);
+                    {
+                        const float pw = 0.10f + fclamp(timbreIn, 0.0f, 1.0f) * 0.80f;
+                        osc.SetPw(pw);
+                    }
+                    sig = osc.Process() * 0.70710677f;
+                    break;
                 default:
-                    osc.SetWaveform(Oscillator::WAVE_POLYBLEP_SQUARE);
-                    osc.SetPw(0.05f + (timbre * 0.90f));
+                    osc.SetWaveform(Oscillator::WAVE_SIN);
                     sig = osc.Process();
                     break;
             }
-            // Subtle "Moog-ish" contour for the classic wave bank:
-            // slight low-pass smoothing + soft saturation.
-            sig = ApplyWaveWarmth(sig, timbreIn);
+            // Neutral waveform path: no extra color stage.
         }
         else if(current.sparkMode == MODE_MACRO_A)
         {
@@ -1085,13 +1075,13 @@ int main(void) {
 
     SparkSettings defaultSettings;
     defaultSettings.sparkMode    = MODE_WAVEFORMS;
-    defaultSettings.waveform     = WAVE_POLYBLEP_SAW;
-    defaultSettings.waveformFreq = 110.0f;
+    defaultSettings.waveform     = WAVE_SIN;
+    defaultSettings.waveformFreq = kMiddleC;
     defaultSettings.macroA = 0;
     defaultSettings.macroB = 0;
 
     storage.Init(defaultSettings);
-    // Startup voice: classic saw in Wave bank for a more Moog-like baseline.
+    // Neutral startup voice in Wave bank.
     storage.GetSettings().sparkMode = MODE_WAVEFORMS;
     storage.GetSettings().macroA    = WrapIndex(storage.GetSettings().macroA, MACRO_A_COUNT);
     storage.GetSettings().macroB    = WrapIndex(storage.GetSettings().macroB, MACRO_B_COUNT);
@@ -1099,12 +1089,12 @@ int main(void) {
     sampleRate = spark.AudioSampleRate();
 
     osc.Init(sampleRate);
-    osc.SetAmp(1.0f);
+    osc.SetAmp(0.70f);
     supersawLow.Init(sampleRate);
-    supersawLow.SetAmp(1.0f);
+    supersawLow.SetAmp(0.70f);
     supersawLow.SetWaveform(Oscillator::WAVE_POLYBLEP_SAW);
     supersawHigh.Init(sampleRate);
-    supersawHigh.SetAmp(1.0f);
+    supersawHigh.SetAmp(0.70f);
     supersawHigh.SetWaveform(Oscillator::WAVE_POLYBLEP_SAW);
     variableSaw.Init(sampleRate);
     variableShape.Init(sampleRate);
