@@ -129,7 +129,7 @@ void nexusDebugPrintf(const char* format, ...);
 
 // Grid drawing sizes for the routing view on the OLED.
 #define BOX_SIZE       6
-#define BOX_SPACING    2
+#define BOX_SPACING    1
 
 #define GRID_PIXEL_SIZE ((MATRIX_SIZE * BOX_SIZE) + ((MATRIX_SIZE - 1) * BOX_SPACING))
 

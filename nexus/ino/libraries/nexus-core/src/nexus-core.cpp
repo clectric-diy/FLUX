@@ -77,7 +77,7 @@ byte detectOledAddress() {
 }
 
 enum FillMode : uint8_t {
-  // 25% stipple keeps inactive cells visible without looking "on".
+  // 25% stipple highlights the cursor row and column without looking "on".
   FILL_25,
   // 100% fill marks an active connection clearly.
   FILL_100,
@@ -108,7 +108,7 @@ int16_t oledY(int16_t y) {
   return y + OLED_PIXEL_Y_OFFSET;
 }
 
-// Draws either a fully filled or stippled rectangle for one matrix cell.
+// Draws one cell using a simple fill pattern that suits a 1-bit OLED.
 void drawStippleRect(int16_t x, int16_t y, int16_t w, int16_t h, FillMode mode) {
   if (mode == FILL_100) {
     display.drawBox(x, y, w, h);
@@ -128,6 +128,18 @@ void drawStippleRect(int16_t x, int16_t y, int16_t w, int16_t h, FillMode mode) 
       if (on) {
         display.drawPixel(gx, gy);
       }
+    }
+  }
+}
+
+// Draws one shared dot at every grid intersection so adjacent cells share corners.
+void drawSharedGridDots() {
+  for (int y = 0; y <= MATRIX_SIZE; y++) {
+    int16_t dotY = oledY(GRID_START_Y - 1 + (y * (BOX_SIZE + BOX_SPACING)));
+
+    for (int x = 0; x <= MATRIX_SIZE; x++) {
+      int16_t dotX = oledX(GRID_START_X - 1 + (x * (BOX_SIZE + BOX_SPACING)));
+      display.drawPixel(dotX, dotY);
     }
   }
 }
@@ -651,6 +663,8 @@ void updateDisplay() {
 
 // Draw the routing grid and right-side status labels.
 void renderRoutingMode() {
+  // drawSharedGridDots();
+
   for (int y = 0; y < MATRIX_SIZE; y++) {
     for (int x = 0; x < MATRIX_SIZE; x++) {
       renderMatrixBox(x, y);
@@ -679,13 +693,13 @@ void renderMatrixBox(byte x, byte y) {
   const bool isSelected = activePatch.isPatchConnectionActive(y, x);
   const bool isCursorCell = (cursorX == x) && (cursorY == y);
 
-  // Keep connection visibility stable while moving cursor:
-  // - unselected: 25% stipple
-  // - selected: 100% fill
-  // - cursor: outline only (does not change fill)
-  FillMode mode = isSelected ? FILL_100 : FILL_25;
-
-  drawStippleRect(boxX, boxY, BOX_SIZE, BOX_SIZE, mode);
+  // Visual rules:
+  // - active connection: solid fill
+  // - inactive connection: blank cell with shared corner dots drawn by the grid
+  // - cursor: square outline only
+  if (isSelected) {
+    drawStippleRect(boxX, boxY, BOX_SIZE, BOX_SIZE, FILL_100);
+  }
 
   if (isCursorCell) {
     // Open square outline around the 6x6 cell
