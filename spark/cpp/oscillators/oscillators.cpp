@@ -167,6 +167,17 @@ static float CurrentShapeValue()
     return shapeSmoothed;
 }
 
+static float CurrentPitchFrequency(float pitchNorm)
+{
+    float semitones = ((pitchNorm * 2.0f) - 1.0f) * static_cast<float>(kKnobSemitoneSpan)
+                      + static_cast<float>(octaveShift * 12);
+    if(kQuantizeToWesternSemitones)
+    {
+        semitones = roundf(semitones);
+    }
+    return kMiddleC * powf(2.0f, semitones / 12.0f);
+}
+
 static const char* ModeName(int mode)
 {
     switch(mode)
@@ -296,13 +307,7 @@ static void LogModifierState(const char* state)
 static void LogSwitchFeedback(const char* switch_name)
 {
     const float pitchNorm = Knob1Calibrated();
-    float semitones = ((pitchNorm * 2.0f) - 1.0f) * static_cast<float>(kKnobSemitoneSpan)
-                      + static_cast<float>(octaveShift * 12);
-    if(kQuantizeToWesternSemitones)
-    {
-        semitones = roundf(semitones);
-    }
-    const float targetFreq = kMiddleC * powf(2.0f, semitones / 12.0f);
+    const float targetFreq = CurrentPitchFrequency(pitchNorm);
     const int   shapePct   = static_cast<int>(Knob2Calibrated() * 100.0f);
     char        label[16];
     snprintf(label, sizeof(label), "%s push", switch_name);
@@ -586,13 +591,7 @@ void ProcessKnobs()
     }
 
     // Musical pitch mapping centered at middle C.
-    float semitones = ((pitchNorm * 2.0f) - 1.0f) * static_cast<float>(kKnobSemitoneSpan)
-                      + static_cast<float>(octaveShift * 12);
-    if(kQuantizeToWesternSemitones)
-    {
-        semitones = roundf(semitones);
-    }
-    const float newFreq = kMiddleC * powf(2.0f, semitones / 12.0f);
+    const float newFreq = CurrentPitchFrequency(pitchNorm);
     if(fabsf(newFreq - current.waveformFreq) > 0.2f)
     {
         const bool k1Up = (lastKnob1LogValue < 0.0f) ? true : (pitchNorm >= lastKnob1LogValue);
