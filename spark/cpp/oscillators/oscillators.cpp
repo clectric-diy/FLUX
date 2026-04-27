@@ -8,6 +8,8 @@ using namespace daisysp;
 using namespace daisy_spark;
 
 static Spark spark;
+static SparkDiagnostics diagnostics(spark);
+static SparkRuntime runtime(spark, diagnostics);
 
 static Oscillator            osc;
 static VariableSawOscillator variableSaw;
@@ -20,13 +22,10 @@ static Overdrive             overdrive;
 static Parameter             freqParam;
 static Parameter             shapeParam;
 
-static uint32_t   lastInteractionTime = 0;
-static bool       saveNeeded          = false;
 static const auto SAVE_DELAY_MS       = 3000U;
 static float      sampleRate          = 48000.0f;
 static float      drumPhase           = 0.0f;
 static bool       encoderTurnedWhilePressed = false;
-static uint32_t   lastDebugStatusMs   = 0;
 
 enum SparkModes {
     MODE_WAVEFORMS = 0,
@@ -84,7 +83,7 @@ PersistentStorage<SparkSettings> storage(spark.seed.qspi);
 #endif
 
 #ifndef SPARK_DEBUG_DEFAULT_LEVEL
-#define SPARK_DEBUG_DEFAULT_LEVEL 2
+#define SPARK_DEBUG_DEFAULT_LEVEL 3
 #endif
 
 #ifndef SPARK_DEBUG_DEFAULT_MASK
@@ -92,22 +91,8 @@ PersistentStorage<SparkSettings> storage(spark.seed.qspi);
 #endif
 
 #ifndef SPARK_DEBUG_STATUS_INTERVAL_MS
-#define SPARK_DEBUG_STATUS_INTERVAL_MS 1000U
+#define SPARK_DEBUG_STATUS_INTERVAL_MS 250U
 #endif
-
-enum DebugLevel {
-    DBG_OFF   = 0,
-    DBG_ERROR = 1,
-    DBG_INFO  = 2,
-    DBG_TRACE = 3
-};
-
-enum DebugCategoryMask : uint8_t {
-    DBG_CAT_CTRL    = 1 << 0,
-    DBG_CAT_AUDIO   = 1 << 1,
-    DBG_CAT_STATE   = 1 << 2,
-    DBG_CAT_STORAGE = 1 << 3
-};
 
 static uint8_t debugLevel = SPARK_DEBUG_DEFAULT_LEVEL;
 static uint8_t debugMask  = SPARK_DEBUG_DEFAULT_MASK;
@@ -126,17 +111,12 @@ static const char* ModeName(int mode)
 static void DebugLog(uint8_t level, uint8_t category, const char* format, ...)
 {
 #if SPARK_DEBUG_ENABLE
-    if(level > debugLevel || (debugMask & category) == 0)
-    {
-        return;
-    }
-
-    char    line[192];
     va_list args;
     va_start(args, format);
+    char line[192];
     vsnprintf(line, sizeof(line), format, args);
     va_end(args);
-    spark.seed.PrintLine("%s", line);
+    diagnostics.Log(level, category, "%s", line);
 #else
     (void)level;
     (void)category;
@@ -147,70 +127,41 @@ static void DebugLog(uint8_t level, uint8_t category, const char* format, ...)
 static void DebugInit()
 {
 #if SPARK_DEBUG_ENABLE
-    spark.seed.StartLog();
+    diagnostics.Init(debugLevel, debugMask, "oscillators");
     DebugLog(DBG_INFO, DBG_CAT_STATE, "spark debug on: level=%d mask=0x%02x", debugLevel, debugMask);
 #endif
 }
 
 static void DebugMaybeStatus()
 {
-    const uint32_t now = System::GetNow();
-    if(now - lastDebugStatusMs < SPARK_DEBUG_STATUS_INTERVAL_MS)
+    if(!diagnostics.StatusDue(SPARK_DEBUG_STATUS_INTERVAL_MS))
     {
         return;
     }
-    lastDebugStatusMs = now;
 
     SparkSettings& current = storage.GetSettings();
-    DebugLog(DBG_TRACE,
-             DBG_CAT_STATE,
-             "status mode=%s wf=%d a=%d b=%d freq=%.2f shape=%.2f",
-             ModeName(current.sparkMode),
-             current.waveform,
-             current.macroA,
-             current.macroB,
-             current.waveformFreq,
-             shapeParam.Value());
+    diagnostics.LogStatusLine(ModeName(current.sparkMode),
+                              current.waveform,
+                              current.macroA,
+                              current.macroB,
+                              current.waveformFreq,
+                              spark.knob1.Value(),
+                              spark.knob2.Value(),
+                              spark.encoder.Pressed(),
+                              spark.button1.Pressed(),
+                              spark.button2.Pressed());
 }
 
 static void ProcessDebugButtons()
 {
 #if SPARK_DEBUG_ENABLE
-    if(spark.button1.FallingEdge())
-    {
-        debugLevel = (debugLevel + 1) % 4;
-        DebugLog(DBG_INFO, DBG_CAT_STATE, "debug level -> %d (0=off,1=err,2=info,3=trace)", debugLevel);
-    }
-
-    if(spark.button2.FallingEdge())
-    {
-        debugMask <<= 1;
-        if(debugMask == 0 || debugMask > 0x08)
-        {
-            debugMask = 0x01;
-        }
-        DebugLog(DBG_INFO, DBG_CAT_STATE, "debug mask -> 0x%02x", debugMask);
-    }
+    runtime.ProcessDebugButtons(debugLevel, debugMask);
 #endif
-}
-
-static inline int WrapIndex(int value, int count)
-{
-    while(value >= count)
-    {
-        value -= count;
-    }
-    while(value < 0)
-    {
-        value += count;
-    }
-    return value;
 }
 
 static void MarkInteraction()
 {
-    saveNeeded          = true;
-    lastInteractionTime = System::GetNow();
+    runtime.MarkInteraction();
     DebugLog(DBG_TRACE, DBG_CAT_CTRL, "interaction marked");
 }
 
@@ -430,7 +381,6 @@ int main(void) {
     grainlet.Init(sampleRate);
     overdrive.Init();
     DebugInit();
-    lastDebugStatusMs = System::GetNow();
 
     freqParam.Init(spark.knob1, 20.0f, 2000.0f, Parameter::LOGARITHMIC);
     shapeParam.Init(spark.knob2, 0.0f, 1.0f, Parameter::LINEAR);
@@ -439,21 +389,16 @@ int main(void) {
 
     while(1)
     {
-        spark.ProcessAllControls();
+        runtime.ProcessControls();
         ProcessEncoder();
         ProcessKnobs();
         UpdateLeds();
         ProcessDebugButtons();
         DebugMaybeStatus();
 
-        if(saveNeeded)
+        if(runtime.MaybeSave(storage, SAVE_DELAY_MS))
         {
-            if(System::GetNow() - lastInteractionTime > SAVE_DELAY_MS)
-            {
-                storage.Save();
-                saveNeeded = false;
-                DebugLog(DBG_INFO, DBG_CAT_STORAGE, "settings saved");
-            }
+            DebugLog(DBG_INFO, DBG_CAT_STORAGE, "settings saved");
         }
     }
 }

@@ -3,10 +3,28 @@
 #define DSY_SPARK_BSP_H
 
 #include "daisy_seed.h"
+#include <cstdint>
 
 namespace daisy_spark
 {
     using namespace daisy;
+
+enum DebugLevel : uint8_t
+{
+    DBG_OFF   = 0,
+    DBG_ERROR = 1,
+    DBG_INFO  = 2,
+    DBG_TRACE = 3
+};
+
+enum DebugCategoryMask : uint8_t
+{
+    DBG_CAT_CTRL    = 1 << 0,
+    DBG_CAT_AUDIO   = 1 << 1,
+    DBG_CAT_STATE   = 1 << 2,
+    DBG_CAT_STORAGE = 1 << 3
+};
+
 /**
     @brief Class that handles initializing all of the hardware specific to the Spark Module. \n
     Helper funtions are also in place to provide easy access to built-in controls and peripherals.
@@ -139,6 +157,88 @@ class Spark
     void InitKnobs();
     void InitMidi();
 };
+
+/** Shared diagnostics helper for Spark firmware variants (oscillators/effects/filters). */
+class SparkDiagnostics
+{
+  public:
+    explicit SparkDiagnostics(Spark& spark) : spark_(spark) {}
+
+    void Init(uint8_t level, uint8_t mask, const char* firmware_name);
+    void PrintBanner(const char* firmware_name);
+    void Log(uint8_t level, uint8_t category, const char* format, ...);
+    void LogStatusLine(const char* mode_name,
+                       int         primary_index,
+                       int         secondary_a,
+                       int         secondary_b,
+                       float       frequency_hz,
+                       float       knob1_value,
+                       float       knob2_value,
+                       bool        encoder_pressed,
+                       bool        button1_pressed,
+                       bool        button2_pressed);
+    bool StatusDue(uint32_t interval_ms);
+    void CycleLevel();
+    void CycleSingleMask();
+    uint8_t Level() const { return level_; }
+    uint8_t Mask() const { return mask_; }
+
+  private:
+    Spark&    spark_;
+    uint8_t   level_          = DBG_INFO;
+    uint8_t   mask_           = DBG_CAT_CTRL | DBG_CAT_AUDIO | DBG_CAT_STATE | DBG_CAT_STORAGE;
+    uint32_t  last_status_ms_ = 0;
+};
+
+/** Shared main-loop helper for Spark firmware variants. */
+class SparkRuntime
+{
+  public:
+    SparkRuntime(Spark& spark, SparkDiagnostics& diagnostics)
+        : spark_(spark), diagnostics_(diagnostics)
+    {
+    }
+
+    void ProcessControls() { spark_.ProcessAllControls(); }
+    void ProcessDebugButtons(uint8_t& debug_level, uint8_t& debug_mask);
+    void MarkInteraction();
+    bool IsDirty() const { return dirty_; }
+
+    template <typename T>
+    bool MaybeSave(PersistentStorage<T>& storage, uint32_t delay_ms)
+    {
+        if(!dirty_)
+        {
+            return false;
+        }
+        if(System::GetNow() - last_interaction_ms_ <= delay_ms)
+        {
+            return false;
+        }
+        storage.Save();
+        dirty_ = false;
+        return true;
+    }
+
+  private:
+    Spark&            spark_;
+    SparkDiagnostics& diagnostics_;
+    bool              dirty_               = false;
+    uint32_t          last_interaction_ms_ = 0;
+};
+
+inline int WrapIndex(int value, int count)
+{
+    while(value >= count)
+    {
+        value -= count;
+    }
+    while(value < 0)
+    {
+        value += count;
+    }
+    return value;
+}
 
 } // namespace daisy_spark
 #endif

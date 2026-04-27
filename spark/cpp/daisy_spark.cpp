@@ -1,4 +1,6 @@
 #include "daisy_spark.h"
+#include <cstdarg>
+#include <cstdio>
 
 #ifndef SAMPLE_RATE
 //#define SAMPLE_RATE DSY_AUDIO_SAMPLE_RATE
@@ -203,4 +205,119 @@ void Spark::InitMidi()
 {
     MidiUartHandler::Config midi_config;
     midi.Init(midi_config);
+}
+
+void SparkDiagnostics::Init(uint8_t level, uint8_t mask, const char* firmware_name)
+{
+    level_ = level;
+    mask_  = mask;
+    spark_.seed.StartLog();
+    PrintBanner(firmware_name);
+}
+
+void SparkDiagnostics::PrintBanner(const char* firmware_name)
+{
+    spark_.seed.PrintLine("========================================");
+    spark_.seed.PrintLine("Spark Diagnostics Firmware: %s", firmware_name);
+    spark_.seed.PrintLine("Controls:");
+    spark_.seed.PrintLine("- Turn encoder: select waveform/model");
+    spark_.seed.PrintLine("- Press+turn encoder: change bank");
+    spark_.seed.PrintLine("- Knob1: primary, Knob2: secondary");
+    spark_.seed.PrintLine("Debug controls:");
+    spark_.seed.PrintLine("- Button1: cycle debug level (0 off, 1 err, 2 info, 3 trace)");
+    spark_.seed.PrintLine("- Button2: cycle debug mask/category");
+    spark_.seed.PrintLine("Current debug level=%d mask=0x%02x", level_, mask_);
+    spark_.seed.PrintLine("========================================");
+}
+
+void SparkDiagnostics::Log(uint8_t level, uint8_t category, const char* format, ...)
+{
+    if(level > level_ || (mask_ & category) == 0)
+    {
+        return;
+    }
+
+    char    line[192];
+    va_list args;
+    va_start(args, format);
+    vsnprintf(line, sizeof(line), format, args);
+    va_end(args);
+    spark_.seed.PrintLine("%s", line);
+}
+
+void SparkDiagnostics::LogStatusLine(const char* mode_name,
+                                     int         primary_index,
+                                     int         secondary_a,
+                                     int         secondary_b,
+                                     float       frequency_hz,
+                                     float       knob1_value,
+                                     float       knob2_value,
+                                     bool        encoder_pressed,
+                                     bool        button1_pressed,
+                                     bool        button2_pressed)
+{
+    Log(DBG_INFO,
+        DBG_CAT_STATE,
+        "status mode=%s wf=%d a=%d b=%d freq=%.2f k1=%.3f k2=%.3f enc=%d b1=%d b2=%d",
+        mode_name,
+        primary_index,
+        secondary_a,
+        secondary_b,
+        frequency_hz,
+        knob1_value,
+        knob2_value,
+        encoder_pressed ? 1 : 0,
+        button1_pressed ? 1 : 0,
+        button2_pressed ? 1 : 0);
+}
+
+bool SparkDiagnostics::StatusDue(uint32_t interval_ms)
+{
+    const uint32_t now = System::GetNow();
+    if(now - last_status_ms_ < interval_ms)
+    {
+        return false;
+    }
+    last_status_ms_ = now;
+    return true;
+}
+
+void SparkDiagnostics::CycleLevel()
+{
+    level_ = (level_ + 1) % 4;
+}
+
+void SparkDiagnostics::CycleSingleMask()
+{
+    mask_ <<= 1;
+    if(mask_ == 0 || mask_ > DBG_CAT_STORAGE)
+    {
+        mask_ = DBG_CAT_CTRL;
+    }
+}
+
+void SparkRuntime::ProcessDebugButtons(uint8_t& debug_level, uint8_t& debug_mask)
+{
+    if(spark_.button1.FallingEdge())
+    {
+        diagnostics_.CycleLevel();
+        debug_level = diagnostics_.Level();
+        diagnostics_.Log(DBG_INFO,
+                         DBG_CAT_STATE,
+                         "debug level -> %d (0=off,1=err,2=info,3=trace)",
+                         debug_level);
+    }
+
+    if(spark_.button2.FallingEdge())
+    {
+        diagnostics_.CycleSingleMask();
+        debug_mask = diagnostics_.Mask();
+        diagnostics_.Log(DBG_INFO, DBG_CAT_STATE, "debug mask -> 0x%02x", debug_mask);
+    }
+}
+
+void SparkRuntime::MarkInteraction()
+{
+    dirty_               = true;
+    last_interaction_ms_ = System::GetNow();
 }
