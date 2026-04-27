@@ -304,10 +304,21 @@ static ModelControls CurvedControls(const SparkSettings& current,
     switch(current.macroB)
     {
         case MACRO_B_OVERDRIVE:
-            out.timbre = powf(timbre, 1.35f);
+            out.timbre    = powf(timbre, 1.35f);
+            out.harmonics = powf(harmonics, 0.88f);
+            break;
+        case MACRO_B_PARTICLE:
+            out.harmonics = powf(harmonics, 0.90f);
+            out.morph     = powf(morph, 1.05f);
+            break;
+        case MACRO_B_RING_MOD_NOISE:
+            out.harmonics = powf(harmonics, 0.85f);
+            out.morph     = powf(morph, 1.10f);
             break;
         case MACRO_B_BASS_DRUM_CLICK:
-            out.timbre = powf(timbre, 0.85f);
+            out.timbre    = powf(timbre, 0.85f);
+            out.harmonics = powf(harmonics, 0.90f);
+            out.morph     = powf(morph, 1.12f);
             break;
         default: break;
     }
@@ -1019,27 +1030,38 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
 
                 case MACRO_B_PARTICLE:
                     particle.SetFreq(current.waveformFreq);
-                    particle.SetResonance(0.2f + (timbre * 0.75f));
+                    particle.SetResonance(0.15f + (timbre * 0.65f) + (harmonics * 0.25f));
                     particle.SetDensity(timbre);
-                    particle.SetRandomFreq(0.4f + (timbre * 12.0f));
-                    particle.SetSpread(4.0f * timbre);
-                    particle.SetGain(0.75f);
+                    particle.SetRandomFreq(0.35f + (timbre * 10.0f) + (morph * 10.0f));
+                    particle.SetSpread(1.5f + (timbre * 5.0f) + (harmonics * 9.0f));
+                    particle.SetGain(0.50f + (morph * 0.48f));
                     sig = particle.Process();
                     break;
 
                 case MACRO_B_RING_MOD_NOISE:
                     grainlet.SetFreq(current.waveformFreq);
-                    grainlet.SetFormantFreq(current.waveformFreq * (2.0f + (timbre * 6.0f)));
-                    grainlet.SetShape(0.2f + (timbre * 2.0f));
-                    grainlet.SetBleed(timbre);
+                    grainlet.SetFormantFreq(current.waveformFreq
+                                             * (2.0f + (timbre * 4.0f) + (harmonics * 8.0f)));
+                    grainlet.SetShape(0.15f + (timbre * 1.85f) + (morph * 0.55f));
+                    grainlet.SetBleed(fclamp(timbre * (1.0f - morph * 0.35f) + harmonics * 0.25f,
+                                             0.0f,
+                                             1.0f));
                     sig = grainlet.Process();
                     break;
 
                 case MACRO_B_OVERDRIVE:
+                {
                     osc.SetWaveform(Oscillator::WAVE_SAW);
-                    overdrive.SetDrive(timbre);
-                    sig = overdrive.Process(osc.Process());
+                    const float src    = osc.Process();
+                    const float drive  = fclamp(timbre, 0.0f, 1.0f);
+                    const float preAmp = 0.30f + harmonics * 0.95f;
+                    overdrive.SetDrive(drive);
+                    const float wet = overdrive.Process(src * preAmp);
+                    // morph: lean dry -> full wet; keep a little wet at morph=0 so timbre stays audible
+                    const float mix = fclamp(0.22f + morph * 0.78f, 0.0f, 1.0f);
+                    sig = (src * (1.0f - mix)) + (wet * mix);
                     break;
+                }
 
                 case MACRO_B_BASS_DRUM_CLICK:
                 {
@@ -1052,10 +1074,10 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
                     }
                     synthBassDrum.SetFreq(fmaxf(20.0f, current.waveformFreq));
                     synthBassDrum.SetTone(timbre);
-                    synthBassDrum.SetDecay(0.2f + (timbre * 0.8f));
-                    synthBassDrum.SetDirtiness(timbre);
-                    synthBassDrum.SetFmEnvelopeAmount(timbre);
-                    synthBassDrum.SetFmEnvelopeDecay(timbre);
+                    synthBassDrum.SetDecay(0.12f + (harmonics * 0.88f));
+                    synthBassDrum.SetDirtiness(fclamp(timbre * 0.55f + morph * 0.45f, 0.0f, 1.0f));
+                    synthBassDrum.SetFmEnvelopeAmount(fclamp(timbre * 0.35f + morph * 0.65f, 0.0f, 1.0f));
+                    synthBassDrum.SetFmEnvelopeDecay(0.18f + (morph * 0.62f) + (timbre * 0.2f));
                     sig = synthBassDrum.Process(trig);
                     break;
                 }
