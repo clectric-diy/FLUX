@@ -124,6 +124,10 @@ PersistentStorage<SparkSettings> storage(spark.seed.qspi);
 #define SPARK_DEBUG_STATUS_INTERVAL_MS 1000U
 #endif
 
+#ifndef SPARK_ENCODER_CLICK_WORKAROUND
+#define SPARK_ENCODER_CLICK_WORKAROUND 1
+#endif
+
 static constexpr float kMiddleC            = 261.63f;
 static constexpr int   kKnobSemitoneSpan   = 12;
 static constexpr int   kOctaveShiftMin     = -2;
@@ -591,9 +595,16 @@ void ProcessEncoder()
         const char* encDir = (inc > 0) ? "enc up" : "enc down";
         char        encLabel[16];
         snprintf(encLabel, sizeof(encLabel), "%-10s", encDir);
+        bool bankSelectActive = false;
+#if SPARK_ENCODER_CLICK_WORKAROUND
         // Temporary workaround while encoder click is unavailable:
         // use sw2 as the modifier for bank selection while turning encoder.
-        const bool bankSelectActive = spark.button2.Pressed();
+        bankSelectActive = spark.button2.Pressed();
+#else
+        // Be tolerant of slight timing jitter between click and first detent.
+        bankSelectActive
+            = spark.encoder.Pressed() || ((nowMs - lastEncoderPressMs) <= kBankSwitchGraceMs);
+#endif
         DebugLog(DBG_TRACE,
                  DBG_CAT_CTRL,
                  "encoder turn inc=%ld enc=%d sw2=%d bank=%d",
