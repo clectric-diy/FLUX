@@ -374,16 +374,19 @@ void SparkDiagnostics::RefreshStatusLine(const char* mode_name,
 {
     // Keep this comfortably below LOGGER_BUFFER (128) to avoid "$$" overflow markers.
     char line[96];
+    const int freq_i = static_cast<int>(frequency_hz);
+    const int k1_i   = static_cast<int>(knob1_value * 100.0f);
+    const int k2_i   = static_cast<int>(knob2_value * 100.0f);
     snprintf(line,
              sizeof(line),
-             "mode=%s wf=%d a=%d b=%d f=%.1f k1=%.2f k2=%.2f e%d b%d%d",
+             "mode=%s wf=%d a=%d b=%d f=%d k1=%d%% k2=%d%% e%d b%d%d",
              mode_name,
              primary_index,
              secondary_a,
              secondary_b,
-             frequency_hz,
-             knob1_value,
-             knob2_value,
+             freq_i,
+             k1_i,
+             k2_i,
              encoder_pressed ? 1 : 0,
              button1_pressed ? 1 : 0,
              button2_pressed ? 1 : 0);
