@@ -305,6 +305,50 @@ void Spark::ApplyLedCalibration(LedTarget target,
     out_b = ApplyGamma(Clamp01(in_b * cal.blue_gain * cal.global_gain), g);
 }
 
+float Spark::ComputeLedLevel(float source_norm, float level_min, float level_max, float gamma)
+{
+    const float x      = Clamp01(source_norm);
+    const float shaped = powf(x, gamma <= 0.0f ? 1.0f : gamma);
+    return level_min + ((level_max - level_min) * shaped);
+}
+
+float Spark::SmoothLedValue(float target, float prev, float alpha, float max_step)
+{
+    if(prev < 0.0f)
+    {
+        return target;
+    }
+    const float filtered = prev + (alpha * (target - prev));
+    const float delta    = filtered - prev;
+    float       limited  = delta;
+    if(limited > max_step)
+    {
+        limited = max_step;
+    }
+    else if(limited < -max_step)
+    {
+        limited = -max_step;
+    }
+    return prev + limited;
+}
+
+void Spark::ApplyLedColorLevel(LedTarget target,
+                               float     color_r,
+                               float     color_g,
+                               float     color_b,
+                               float     level,
+                               float&    out_r,
+                               float&    out_g,
+                               float&    out_b) const
+{
+    float base_r, base_g, base_b;
+    ApplyLedCalibration(target, color_r, color_g, color_b, base_r, base_g, base_b);
+    const float l = Clamp01(level);
+    out_r         = Clamp01(base_r * l);
+    out_g         = Clamp01(base_g * l);
+    out_b         = Clamp01(base_b * l);
+}
+
 float Spark::Clamp01(float v)
 {
     if(v < 0.0f)

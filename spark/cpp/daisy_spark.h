@@ -197,6 +197,22 @@ class Spark
                              float&    out_g,
                              float&    out_b) const;
 
+    /** Map normalized control value into perceptual LED brightness range. */
+    static float ComputeLedLevel(float source_norm, float level_min, float level_max, float gamma);
+
+    /** One-pole smoothing with per-update slew limit for LED levels. */
+    static float SmoothLedValue(float target, float prev, float alpha, float max_step);
+
+    /** Apply calibration once and scale calibrated hue by intensity level. */
+    void ApplyLedColorLevel(LedTarget target,
+                            float     color_r,
+                            float     color_g,
+                            float     color_b,
+                            float     level,
+                            float&    out_r,
+                            float&    out_g,
+                            float&    out_b) const;
+
     /** Public Members */
     DaisySeed     seed;        /**<# */
     Encoder       encoder;     /**< & */
