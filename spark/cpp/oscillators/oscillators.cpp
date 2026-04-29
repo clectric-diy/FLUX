@@ -40,11 +40,11 @@ static float      shapeTarget               = -1.0f;
 static float      shapeSmoothed             = -1.0f;
 static uint32_t   lastKnobFeedbackMs        = 0;
 static Spark::LedCalibration kOnboardLedCalibration = {
-    0.45f, // global_gain
-    1.00f, // red_gain
-    1.00f, // green_gain
-    1.00f, // blue_gain
-    1.80f  // gamma
+    1.00f, // global_gain
+    1.80f, // red_gain
+    1.65f, // green_gain
+    0.65f, // blue_gain
+    1.20f  // gamma
 };
 
 // I2C RGB in front of PEL12T (or similar). Set in Makefile, e.g. -DSPARK_ENCODER_I2C_ADDR7=0x30
@@ -174,6 +174,22 @@ static constexpr float kWaveGainSaw = 1.0069f;      // 4.37 / 4.34
 static constexpr float kWaveGainSquare = 1.3571f;   // 4.37 / 3.22
 static constexpr float kWaveGainRamp = 0.9541f;     // 4.37 / 4.58
 static constexpr float kWaveGainSuperSaw = 0.9440f; // reduced to tame beat peaks (4.87V -> ~4.37V target)
+// Onboard LED response tuning (single middle-brightness profile, warm motion).
+static constexpr float kLedLevelMin         = 0.08f;
+static constexpr float kLedLevelMax         = 0.90f;
+static constexpr float kLedLevelGamma       = 1.35f;
+static constexpr float kLedSmoothingAlpha   = 0.10f;
+static constexpr float kLedMaxStepPerUpdate = 0.015f;
+static constexpr float kLedModifierSmoothingAlpha   = 0.35f;
+static constexpr float kLedModifierMaxStepPerUpdate = 0.08f;
+static constexpr float kLedHueRedBoost      = 2.20f;
+static constexpr float kLedHueGreenBoost    = 1.95f;
+static constexpr float kLedHueBlueScale     = 0.55f;
+static constexpr float kStartupWhiteLevel   = 0.75f;
+static constexpr uint32_t kStartupWhiteHoldMs = 2000;
+static constexpr float kStartupWhiteRScale = 0.85f;
+static constexpr float kStartupWhiteGScale = 0.72f;
+static constexpr float kStartupWhiteBScale = 1.45f;
 static float            modifierHarmonics = 0.0f;
 static float            modifierMorph = 0.0f;
 static uint32_t         sw1PressStartMs = 0;
@@ -192,6 +208,12 @@ static bool             k2ShapeFrozenAfterModifier = false;
 static float            k2NormLatchOnModifierExit = 0.0f;
 static constexpr float  kKnobRearmMove   = 0.035f;
 static float            k1PitchForFreq  = -1.0f;
+static float            k1LedLevelSmooth = -1.0f;
+static float            k2LedLevelSmooth = -1.0f;
+static float            k3LedLevelSmooth = -1.0f;
+static float            k4LedLevelSmooth = -1.0f;
+static bool             startupWhiteActive = true;
+static uint32_t         startupWhiteStartMs = 0;
 
 static float CalibrateKnob(float raw, float minv, float maxv)
 {
@@ -234,6 +256,17 @@ static float CurrentPitchFrequency(float pitchNorm)
 {
     const float ratio = kFreqMaxHz / kFreqMinHz;
     return kFreqMinHz * powf(ratio, fclamp(pitchNorm, 0.0f, 1.0f));
+}
+
+static float FrequencyToPitchNorm(float freqHz)
+{
+    const float ratio = kFreqMaxHz / kFreqMinHz;
+    if(ratio <= 1.0f || freqHz <= 0.0f)
+    {
+        return 0.0f;
+    }
+    const float norm = logf(freqHz / kFreqMinHz) / logf(ratio);
+    return fclamp(norm, 0.0f, 1.0f);
 }
 
 static float ApplyFinalLimiter(float input)
@@ -471,11 +504,91 @@ static constexpr RgbColor kRoygbivRedLast[] = {
     {0.55f, 0.00f, 0.75f}, // violet
     {0.90f, 0.00f, 0.00f}, // red (last)
 };
+static constexpr int kLedPaletteCount
+    = static_cast<int>(sizeof(kRoygbivRedLast) / sizeof(kRoygbivRedLast[0]));
 
 static RgbColor PaletteColor(int index)
 {
-    const int paletteCount = static_cast<int>(sizeof(kRoygbivRedLast) / sizeof(kRoygbivRedLast[0]));
-    return kRoygbivRedLast[WrapIndex(index, paletteCount)];
+    return kRoygbivRedLast[WrapIndex(index, kLedPaletteCount)];
+}
+
+static float WarmLedLevel(float sourceNorm)
+{
+    const float x = fclamp(sourceNorm, 0.0f, 1.0f);
+    const float shaped = powf(x, kLedLevelGamma);
+    return kLedLevelMin + ((kLedLevelMax - kLedLevelMin) * shaped);
+}
+
+static float SmoothLedLevel(float target, float prev)
+{
+    if(prev < 0.0f)
+    {
+        return target;
+    }
+    const float filtered = prev + (kLedSmoothingAlpha * (target - prev));
+    const float delta = filtered - prev;
+    const float limited = fclamp(delta, -kLedMaxStepPerUpdate, kLedMaxStepPerUpdate);
+    return prev + limited;
+}
+
+static float SmoothLedLevelFast(float target, float prev)
+{
+    if(prev < 0.0f)
+    {
+        return target;
+    }
+    const float filtered = prev + (kLedModifierSmoothingAlpha * (target - prev));
+    const float delta = filtered - prev;
+    const float limited = fclamp(delta,
+                                 -kLedModifierMaxStepPerUpdate,
+                                 kLedModifierMaxStepPerUpdate);
+    return prev + limited;
+}
+
+static RgbColor BoostedOnboardHue(const RgbColor in)
+{
+    RgbColor out;
+    out.r = fclamp(in.r * kLedHueRedBoost, 0.0f, 1.0f);
+    out.g = fclamp(in.g * kLedHueGreenBoost, 0.0f, 1.0f);
+    out.b = fclamp(in.b * kLedHueBlueScale, 0.0f, 1.0f);
+    return out;
+}
+
+static RgbColor StartupWhiteRgb()
+{
+    RgbColor c;
+    c.r = fclamp(kStartupWhiteLevel * kStartupWhiteRScale, 0.0f, 1.0f);
+    c.g = fclamp(kStartupWhiteLevel * kStartupWhiteGScale, 0.0f, 1.0f);
+    c.b = fclamp(kStartupWhiteLevel * kStartupWhiteBScale, 0.0f, 1.0f);
+    return c;
+}
+
+static void SetStartupWhiteLeds()
+{
+    const RgbColor startupWhite = StartupWhiteRgb();
+
+    float led1r, led1g, led1b;
+    spark.ApplyLedCalibration(Spark::LedTarget::Onboard,
+                              startupWhite.r,
+                              startupWhite.g,
+                              startupWhite.b,
+                              led1r,
+                              led1g,
+                              led1b);
+
+    float led2r, led2g, led2b;
+    spark.ApplyLedCalibration(Spark::LedTarget::Onboard,
+                              startupWhite.r,
+                              startupWhite.g,
+                              startupWhite.b,
+                              led2r,
+                              led2g,
+                              led2b);
+
+    spark.led1.Set(led1r, led1g, led1b);
+    spark.led2.Set(led2r, led2g, led2b);
+    spark.SetEncoderI2cRgb(startupWhite.r, startupWhite.g, startupWhite.b);
+    spark.UpdateLeds();
 }
 
 static void DebugStatusNow(const char* reason)
@@ -650,39 +763,57 @@ static void MarkInteraction()
 
 static void UpdateLeds()
 {
+    if(startupWhiteActive)
+    {
+        SetStartupWhiteLeds();
+        return;
+    }
+
     SparkSettings& current = storage.GetSettings();
-    const int modeColorIndex = (current.sparkMode == MODE_WAVEFORMS)
-                                   ? 0
-                               : (current.sparkMode == MODE_MACRO_A) ? 2
-                                                                       : 4;
     const int itemColorIndex = (current.sparkMode == MODE_WAVEFORMS)
                                    ? current.waveform
                                : (current.sparkMode == MODE_MACRO_A) ? current.macroA
                                                                        : current.macroB;
 
-    const RgbColor modeColor = PaletteColor(modeColorIndex);
-    const RgbColor itemColor = PaletteColor(itemColorIndex);
+    const RgbColor itemColor = BoostedOnboardHue(PaletteColor(itemColorIndex));
+
+    // Maintain independent brightness states for k1/k2/k3/k4.
+    const float k1Target = WarmLedLevel(FrequencyToPitchNorm(current.waveformFreq));
+    const float k2Target = WarmLedLevel(CurrentShapeValue());
+    const float k3Target = WarmLedLevel(modifierHarmonics);
+    const float k4Target = WarmLedLevel(modifierMorph);
+
+    k1LedLevelSmooth = SmoothLedLevel(k1Target, k1LedLevelSmooth);
+    k2LedLevelSmooth = SmoothLedLevel(k2Target, k2LedLevelSmooth);
+    k3LedLevelSmooth = SmoothLedLevelFast(k3Target, k3LedLevelSmooth);
+    k4LedLevelSmooth = SmoothLedLevelFast(k4Target, k4LedLevelSmooth);
+
+    // Display k1/k2 by default; while holding modifiers show k3/k4 respectively.
+    const float led1Level = sw1ModifierActive ? k3LedLevelSmooth : k1LedLevelSmooth;
+    const float led2Level = sw2ModifierActive ? k4LedLevelSmooth : k2LedLevelSmooth;
+
     float led1r, led1g, led1b;
     spark.ApplyLedCalibration(Spark::LedTarget::Onboard,
-                              modeColor.r * 0.28f,
-                              modeColor.g * 0.28f,
-                              modeColor.b * 0.28f,
+                              itemColor.r * led1Level,
+                              itemColor.g * led1Level,
+                              itemColor.b * led1Level,
                               led1r,
                               led1g,
                               led1b);
 
     float led2r, led2g, led2b;
     spark.ApplyLedCalibration(Spark::LedTarget::Onboard,
-                              itemColor.r * 0.45f,
-                              itemColor.g * 0.45f,
-                              itemColor.b * 0.45f,
+                              itemColor.r * led2Level,
+                              itemColor.g * led2Level,
+                              itemColor.b * led2Level,
                               led2r,
                               led2g,
                               led2b);
 
     spark.led1.Set(led1r, led1g, led1b);
     spark.led2.Set(led2r, led2g, led2b);
-    spark.SetEncoderI2cRgb(itemColor.r * 0.45f, itemColor.g * 0.45f, itemColor.b * 0.45f);
+    const RgbColor startupWhite = StartupWhiteRgb();
+    spark.SetEncoderI2cRgb(startupWhite.r, startupWhite.g, startupWhite.b);
     spark.UpdateLeds();
 }
 
@@ -1216,6 +1347,8 @@ int main(void) {
 #endif
     DebugInit();
     spark.StartAdc();
+    startupWhiteStartMs = System::GetNow();
+    SetStartupWhiteLeds();
 
     freqParam.Init(spark.knob1, 20.0f, 2000.0f, Parameter::LOGARITHMIC);
     shapeParam.Init(spark.knob2, 0.0f, 1.0f, Parameter::LINEAR);
@@ -1274,6 +1407,15 @@ int main(void) {
 
         ProcessEncoder();
         ProcessKnobs();
+        if(startupWhiteActive)
+        {
+            const uint32_t nowMs = System::GetNow();
+            if((nowMs - startupWhiteStartMs) >= kStartupWhiteHoldMs)
+            {
+                // Exit startup white only after hold time and at least one control/voltage cycle.
+                startupWhiteActive = false;
+            }
+        }
         UpdateLeds();
         DebugMaybePrintI2cScan();
         DebugMaybeStatus();
