@@ -154,8 +154,8 @@ static constexpr float kFreqMinHz          = 32.0f;
 static constexpr float kFreqMaxHz          = 650.0f;
 static constexpr uint32_t kBankSwitchGraceMs = 180;
 static constexpr uint32_t kKnobFeedbackIntervalMs = 120;
-static constexpr uint32_t kSw1HoldMs = 220;
-static constexpr uint32_t kSw2HoldMs = 220;
+static constexpr uint32_t kSw1HoldMs = 110;
+static constexpr uint32_t kSw2HoldMs = 110;
 static constexpr float kShapeDeadband = 0.005f;
 static constexpr float kShapeSmoothingAlpha = 0.20f;
 static constexpr float kShapeLogStep = 0.02f;
@@ -509,37 +509,15 @@ static RgbColor PaletteColor(int index)
     return kRoygbivRedLast[WrapIndex(index, kLedPaletteCount)];
 }
 
-static float WarmLedLevel(float sourceNorm)
-{
-    const float x = fclamp(sourceNorm, 0.0f, 1.0f);
-    const float shaped = powf(x, kLedLevelGamma);
-    return kLedLevelMin + ((kLedLevelMax - kLedLevelMin) * shaped);
-}
-
 static float SmoothLedLevel(float target, float prev)
 {
-    if(prev < 0.0f)
-    {
-        return target;
-    }
-    const float filtered = prev + (kLedSmoothingAlpha * (target - prev));
-    const float delta = filtered - prev;
-    const float limited = fclamp(delta, -kLedMaxStepPerUpdate, kLedMaxStepPerUpdate);
-    return prev + limited;
+    return Spark::SmoothLedValue(target, prev, kLedSmoothingAlpha, kLedMaxStepPerUpdate);
 }
 
 static float SmoothLedLevelFast(float target, float prev)
 {
-    if(prev < 0.0f)
-    {
-        return target;
-    }
-    const float filtered = prev + (kLedModifierSmoothingAlpha * (target - prev));
-    const float delta = filtered - prev;
-    const float limited = fclamp(delta,
-                                 -kLedModifierMaxStepPerUpdate,
-                                 kLedModifierMaxStepPerUpdate);
-    return prev + limited;
+    return Spark::SmoothLedValue(
+        target, prev, kLedModifierSmoothingAlpha, kLedModifierMaxStepPerUpdate);
 }
 
 static RgbColor StartupWhiteRgb()
@@ -766,13 +744,17 @@ static void UpdateLeds()
     const RgbColor itemColor = PaletteColor(itemColorIndex);
 
     // Maintain independent brightness states for k1/k2/k3/k4.
-    const float k1Target = WarmLedLevel(FrequencyToPitchNorm(current.waveformFreq));
-    const float k2Target = WarmLedLevel(CurrentShapeValue());
-    const float k3Target = WarmLedLevel(modifierHarmonics);
-    const float k4Target = WarmLedLevel(modifierMorph);
+    const float k1Target = Spark::ComputeLedLevel(
+        FrequencyToPitchNorm(current.waveformFreq), kLedLevelMin, kLedLevelMax, kLedLevelGamma);
+    const float k2Target = Spark::ComputeLedLevel(
+        CurrentShapeValue(), kLedLevelMin, kLedLevelMax, kLedLevelGamma);
+    const float k3Target = Spark::ComputeLedLevel(
+        modifierHarmonics, kLedLevelMin, kLedLevelMax, kLedLevelGamma);
+    const float k4Target
+        = Spark::ComputeLedLevel(modifierMorph, kLedLevelMin, kLedLevelMax, kLedLevelGamma);
 
     k1LedLevelSmooth = SmoothLedLevel(k1Target, k1LedLevelSmooth);
-    k2LedLevelSmooth = SmoothLedLevel(k2Target, k2LedLevelSmooth);
+    k2LedLevelSmooth = SmoothLedLevelFast(k2Target, k2LedLevelSmooth);
     k3LedLevelSmooth = SmoothLedLevelFast(k3Target, k3LedLevelSmooth);
     k4LedLevelSmooth = SmoothLedLevelFast(k4Target, k4LedLevelSmooth);
 
@@ -780,18 +762,24 @@ static void UpdateLeds()
     const float led1Level = sw1ModifierActive ? k3LedLevelSmooth : k1LedLevelSmooth;
     const float led2Level = sw2ModifierActive ? k4LedLevelSmooth : k2LedLevelSmooth;
 
-    // Preserve hue across brightness levels: calibrate color once, then scale intensity per LED.
-    float baseR, baseG, baseB;
-    spark.ApplyLedCalibration(
-        Spark::LedTarget::Onboard, itemColor.r, itemColor.g, itemColor.b, baseR, baseG, baseB);
-
-    const float led1r = fclamp(baseR * led1Level, 0.0f, 1.0f);
-    const float led1g = fclamp(baseG * led1Level, 0.0f, 1.0f);
-    const float led1b = fclamp(baseB * led1Level, 0.0f, 1.0f);
-
-    const float led2r = fclamp(baseR * led2Level, 0.0f, 1.0f);
-    const float led2g = fclamp(baseG * led2Level, 0.0f, 1.0f);
-    const float led2b = fclamp(baseB * led2Level, 0.0f, 1.0f);
+    float led1r, led1g, led1b;
+    float led2r, led2g, led2b;
+    spark.ApplyLedColorLevel(Spark::LedTarget::Onboard,
+                             itemColor.r,
+                             itemColor.g,
+                             itemColor.b,
+                             led1Level,
+                             led1r,
+                             led1g,
+                             led1b);
+    spark.ApplyLedColorLevel(Spark::LedTarget::Onboard,
+                             itemColor.r,
+                             itemColor.g,
+                             itemColor.b,
+                             led2Level,
+                             led2r,
+                             led2g,
+                             led2b);
 
     spark.led1.Set(led1r, led1g, led1b);
     spark.led2.Set(led2r, led2g, led2b);
