@@ -175,16 +175,13 @@ static constexpr float kWaveGainSquare = 1.3571f;   // 4.37 / 3.22
 static constexpr float kWaveGainRamp = 0.9541f;     // 4.37 / 4.58
 static constexpr float kWaveGainSuperSaw = 0.9440f; // reduced to tame beat peaks (4.87V -> ~4.37V target)
 // Onboard LED response tuning (single middle-brightness profile, warm motion).
-static constexpr float kLedLevelMin         = 0.08f;
-static constexpr float kLedLevelMax         = 0.90f;
+static constexpr float kLedLevelMin         = 0.22f;
+static constexpr float kLedLevelMax         = 1.00f;
 static constexpr float kLedLevelGamma       = 1.35f;
-static constexpr float kLedSmoothingAlpha   = 0.10f;
-static constexpr float kLedMaxStepPerUpdate = 0.015f;
+static constexpr float kLedSmoothingAlpha   = 0.08f;
+static constexpr float kLedMaxStepPerUpdate = 0.010f;
 static constexpr float kLedModifierSmoothingAlpha   = 0.35f;
 static constexpr float kLedModifierMaxStepPerUpdate = 0.08f;
-static constexpr float kLedHueRedBoost      = 2.20f;
-static constexpr float kLedHueGreenBoost    = 1.95f;
-static constexpr float kLedHueBlueScale     = 0.55f;
 static constexpr float kStartupWhiteLevel   = 0.75f;
 static constexpr uint32_t kStartupWhiteHoldMs = 2000;
 static constexpr float kStartupWhiteRScale = 0.85f;
@@ -545,15 +542,6 @@ static float SmoothLedLevelFast(float target, float prev)
     return prev + limited;
 }
 
-static RgbColor BoostedOnboardHue(const RgbColor in)
-{
-    RgbColor out;
-    out.r = fclamp(in.r * kLedHueRedBoost, 0.0f, 1.0f);
-    out.g = fclamp(in.g * kLedHueGreenBoost, 0.0f, 1.0f);
-    out.b = fclamp(in.b * kLedHueBlueScale, 0.0f, 1.0f);
-    return out;
-}
-
 static RgbColor StartupWhiteRgb()
 {
     RgbColor c;
@@ -775,7 +763,7 @@ static void UpdateLeds()
                                : (current.sparkMode == MODE_MACRO_A) ? current.macroA
                                                                        : current.macroB;
 
-    const RgbColor itemColor = BoostedOnboardHue(PaletteColor(itemColorIndex));
+    const RgbColor itemColor = PaletteColor(itemColorIndex);
 
     // Maintain independent brightness states for k1/k2/k3/k4.
     const float k1Target = WarmLedLevel(FrequencyToPitchNorm(current.waveformFreq));
@@ -792,23 +780,18 @@ static void UpdateLeds()
     const float led1Level = sw1ModifierActive ? k3LedLevelSmooth : k1LedLevelSmooth;
     const float led2Level = sw2ModifierActive ? k4LedLevelSmooth : k2LedLevelSmooth;
 
-    float led1r, led1g, led1b;
-    spark.ApplyLedCalibration(Spark::LedTarget::Onboard,
-                              itemColor.r * led1Level,
-                              itemColor.g * led1Level,
-                              itemColor.b * led1Level,
-                              led1r,
-                              led1g,
-                              led1b);
+    // Preserve hue across brightness levels: calibrate color once, then scale intensity per LED.
+    float baseR, baseG, baseB;
+    spark.ApplyLedCalibration(
+        Spark::LedTarget::Onboard, itemColor.r, itemColor.g, itemColor.b, baseR, baseG, baseB);
 
-    float led2r, led2g, led2b;
-    spark.ApplyLedCalibration(Spark::LedTarget::Onboard,
-                              itemColor.r * led2Level,
-                              itemColor.g * led2Level,
-                              itemColor.b * led2Level,
-                              led2r,
-                              led2g,
-                              led2b);
+    const float led1r = fclamp(baseR * led1Level, 0.0f, 1.0f);
+    const float led1g = fclamp(baseG * led1Level, 0.0f, 1.0f);
+    const float led1b = fclamp(baseB * led1Level, 0.0f, 1.0f);
+
+    const float led2r = fclamp(baseR * led2Level, 0.0f, 1.0f);
+    const float led2g = fclamp(baseG * led2Level, 0.0f, 1.0f);
+    const float led2b = fclamp(baseB * led2Level, 0.0f, 1.0f);
 
     spark.led1.Set(led1r, led1g, led1b);
     spark.led2.Set(led2r, led2g, led2b);
