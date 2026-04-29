@@ -32,10 +32,8 @@ static Parameter             shapeParam;
 static const auto SAVE_DELAY_MS       = 3000U;
 static float      sampleRate          = 48000.0f;
 static float      drumPhase           = 0.0f;
-static bool     encoderTurnedWhilePressed = false;
-static uint32_t lastEncoderPressMs        = 0;
-static int        octaveShift               = 0;
-static bool       octaveChangedPending      = false;
+static bool       encoderTurnedWhilePressed = false;
+static uint32_t   lastEncoderPressMs        = 0;
 static float      lastKnob2ShapeLog         = -1.0f;
 static float      lastKnob1LogValue         = -1.0f;
 static float      shapeTarget               = -1.0f;
@@ -144,15 +142,20 @@ PersistentStorage<SparkSettings> storage(spark.seed.qspi);
 #ifndef SPARK_I2C_SCAN_BOOT
 #define SPARK_I2C_SCAN_BOOT 1
 #endif
+// TEMP WORKAROUND (remove after hardware fix):
+// Current Spark hardware revision has an encoder-click electrical issue, so we temporarily
+// use SW2-held + encoder-turn for bank selection.
+// To remove this workaround after hardware fix:
+//   1) set SPARK_ENCODER_CLICK_WORKAROUND to 0
+//   2) bank selection reverts to encoder-click + turn (with grace window)
+// Encoder click action code (click-to-cycle-bank) remains in place below.
 
-static constexpr float kMiddleC            = 261.63f;
-static constexpr int   kKnobSemitoneSpan   = 12;
-static constexpr int   kOctaveShiftMin     = -2;
-static constexpr int   kOctaveShiftMax     = 2;
+static constexpr float kFreqMinHz          = 32.0f;
+static constexpr float kFreqMaxHz          = 650.0f;
 static constexpr uint32_t kBankSwitchGraceMs = 180;
 static constexpr uint32_t kKnobFeedbackIntervalMs = 120;
+static constexpr uint32_t kSw1HoldMs = 220;
 static constexpr uint32_t kSw2HoldMs = 220;
-static constexpr bool  kQuantizeToWesternSemitones = false;
 static constexpr float kShapeDeadband = 0.005f;
 static constexpr float kShapeSmoothingAlpha = 0.20f;
 static constexpr float kShapeLogStep = 0.02f;
@@ -173,10 +176,15 @@ static constexpr float kWaveGainRamp = 0.9541f;     // 4.37 / 4.58
 static constexpr float kWaveGainSuperSaw = 0.9440f; // reduced to tame beat peaks (4.87V -> ~4.37V target)
 static float            modifierHarmonics = 0.0f;
 static float            modifierMorph = 0.0f;
+static uint32_t         sw1PressStartMs = 0;
+static bool             sw1ModifierActive = false;
 static uint32_t         sw2PressStartMs = 0;
 static bool             sw2ModifierActive = false;
-// While sw2 modifier is on, k1 edits harmonics (k3) and does not update pitch; on release, do not
+// While sw1 modifier is on, k1 edits harmonics (k3) and does not update pitch; on release, do not
 // snap freq to k1 until the knob moves again (otherwise k3 and k1 appear coupled).
+static bool             prevSw1ModifierForLatch = false;
+// While sw2 modifier is on, k2 edits morph (k4) and does not update timbre; on release, do not
+// snap timbre to k2 until the knob moves again (same coupling prevention as k1/k3).
 static bool             prevSw2ModifierForLatch = false;
 static bool             k1PitchFrozenAfterModifier = false;
 static float            k1NormLatchOnModifierExit = 0.0f;
@@ -224,13 +232,8 @@ static float CurrentShapeValue()
 
 static float CurrentPitchFrequency(float pitchNorm)
 {
-    float semitones = ((pitchNorm * 2.0f) - 1.0f) * static_cast<float>(kKnobSemitoneSpan)
-                      + static_cast<float>(octaveShift * 12);
-    if(kQuantizeToWesternSemitones)
-    {
-        semitones = roundf(semitones);
-    }
-    return kMiddleC * powf(2.0f, semitones / 12.0f);
+    const float ratio = kFreqMaxHz / kFreqMinHz;
+    return kFreqMinHz * powf(ratio, fclamp(pitchNorm, 0.0f, 1.0f));
 }
 
 static float ApplyFinalLimiter(float input)
@@ -537,28 +540,13 @@ static void LogModifierFeedback(const char* source)
                     (source[1] == '3') ? ParamPct(modifierHarmonics) : ParamPct(modifierMorph));
 }
 
-static void LogModifierState(const char* state)
+static void LogModifierState(const char* source, const char* state)
 {
     diagnostics.Log(DBG_INFO,
                     DBG_CAT_CTRL,
                     "%-10smod -> %s",
-                    "sw2 hold",
+                    source,
                     state);
-}
-
-static void LogSwitchFeedback(const char* switch_name)
-{
-    const float pitchNorm = Knob1Calibrated();
-    const float targetFreq = CurrentPitchFrequency(pitchNorm);
-    char        label[16];
-    snprintf(label, sizeof(label), "%s push", switch_name);
-
-    diagnostics.Log(DBG_INFO,
-                    DBG_CAT_CTRL,
-                    "%-10soct -> %d freq -> %dHz",
-                    label,
-                    octaveShift,
-                    static_cast<int>(targetFreq));
 }
 
 static void DebugLog(uint8_t level, uint8_t category, const char* format, ...)
@@ -708,12 +696,14 @@ void ProcessEncoder()
     {
         encoderTurnedWhilePressed = false;
         lastEncoderPressMs        = nowMs;
+        diagnostics.Log(DBG_INFO, DBG_CAT_CTRL, "%-10sstate -> down", "enc click");
         TRACE_CTRL_LOG("encoder press");
         DebugStatusNow("enc-press");
     }
 
     if(spark.encoder.FallingEdge())
     {
+        diagnostics.Log(DBG_INFO, DBG_CAT_CTRL, "%-10sstate -> up", "enc click");
         TRACE_CTRL_LOG("encoder release");
         DebugStatusNow("enc-release");
     }
@@ -725,24 +715,24 @@ void ProcessEncoder()
         snprintf(encLabel, sizeof(encLabel), "%-10s", encDir);
         bool bankSelectActive = false;
 #if SPARK_ENCODER_CLICK_WORKAROUND
-        // Temporary workaround while encoder click is unavailable:
-        // use sw2 as the modifier for bank selection while turning encoder.
+        // TEMP: use SW2 as bank-select modifier while encoder click hardware is broken.
         bankSelectActive = spark.button2.Pressed();
 #else
-        // Be tolerant of slight timing jitter between click and first detent.
+        // Normal behavior: encoder click + turn selects bank.
         bankSelectActive
             = spark.encoder.Pressed() || ((nowMs - lastEncoderPressMs) <= kBankSwitchGraceMs);
 #endif
+
         TRACE_CTRL_LOG("encoder turn inc=%ld enc=%d sw2=%d bank=%d",
                        static_cast<long>(inc),
                        spark.encoder.Pressed() ? 1 : 0,
                        spark.button2.Pressed() ? 1 : 0,
                        bankSelectActive ? 1 : 0);
+        encoderTurnedWhilePressed = true;
 
         if(bankSelectActive)
         {
             current.sparkMode = WrapIndex(current.sparkMode + static_cast<int>(inc), MODE_COUNT);
-            encoderTurnedWhilePressed = true;
             diagnostics.Log(DBG_INFO,
                             DBG_CAT_CTRL,
                             "%smode -> %s",
@@ -750,60 +740,51 @@ void ProcessEncoder()
                             ModeName(current.sparkMode));
             DebugStatusNow("bank");
         }
+        else if(current.sparkMode == MODE_WAVEFORMS)
+        {
+            current.waveform = WrapIndex(current.waveform + static_cast<int>(inc), WAVE_COUNT);
+            diagnostics.Log(DBG_INFO,
+                            DBG_CAT_CTRL,
+                            "%swave -> %d (%s)",
+                            encLabel,
+                            current.waveform,
+                            WaveName(current.waveform));
+            DebugStatusNow("wave");
+        }
+        else if(current.sparkMode == MODE_MACRO_A)
+        {
+            current.macroA = WrapIndex(current.macroA + static_cast<int>(inc), MACRO_A_COUNT);
+            diagnostics.Log(DBG_INFO,
+                            DBG_CAT_CTRL,
+                            "%smacroA -> %d (%s)",
+                            encLabel,
+                            current.macroA,
+                            MacroAName(current.macroA));
+            DebugStatusNow("macroA");
+        }
         else
         {
-            if(current.sparkMode == MODE_WAVEFORMS)
-            {
-                current.waveform = WrapIndex(current.waveform + static_cast<int>(inc), WAVE_COUNT);
-                diagnostics.Log(DBG_INFO,
-                                DBG_CAT_CTRL,
-                                "%swave -> %d (%s)",
-                                encLabel,
-                                current.waveform,
-                                WaveName(current.waveform));
-                DebugStatusNow("wave");
-            }
-            else if(current.sparkMode == MODE_MACRO_A)
-            {
-                current.macroA = WrapIndex(current.macroA + static_cast<int>(inc), MACRO_A_COUNT);
-                diagnostics.Log(DBG_INFO,
-                                DBG_CAT_CTRL,
-                                "%smacroA -> %d (%s)",
-                                encLabel,
-                                current.macroA,
-                                MacroAName(current.macroA));
-                DebugStatusNow("macroA");
-            }
-            else
-            {
-                current.macroB = WrapIndex(current.macroB + static_cast<int>(inc), MACRO_B_COUNT);
-                diagnostics.Log(DBG_INFO,
-                                DBG_CAT_CTRL,
-                                "%smacroB -> %d (%s)",
-                                encLabel,
-                                current.macroB,
-                                MacroBName(current.macroB));
-                DebugStatusNow("macroB");
-            }
+            current.macroB = WrapIndex(current.macroB + static_cast<int>(inc), MACRO_B_COUNT);
+            diagnostics.Log(DBG_INFO,
+                            DBG_CAT_CTRL,
+                            "%smacroB -> %d (%s)",
+                            encLabel,
+                            current.macroB,
+                            MacroBName(current.macroB));
+            DebugStatusNow("macroB");
         }
         MarkInteraction();
     }
 
-    if(spark.encoder.FallingEdge() && !encoderTurnedWhilePressed)
+    // Click action retained: click/release without turning cycles bank.
+    // This should function once encoder-click hardware is corrected.
+    bool clickEvent = spark.encoder.FallingEdge() && !encoderTurnedWhilePressed;
+    if(clickEvent)
     {
-        if(current.sparkMode == MODE_MACRO_B && current.macroB == MACRO_B_STRING)
-        {
-            stringVoice.Trig();
-            DebugLog(DBG_INFO, DBG_CAT_CTRL, "string trig");
-            DebugStatusNow("string-trig");
-        }
-        else if(current.sparkMode == MODE_MACRO_B
-                && current.macroB == MACRO_B_BASS_DRUM_CLICK)
-        {
-            synthBassDrum.Trig();
-            DebugLog(DBG_INFO, DBG_CAT_CTRL, "drum trig");
-            DebugStatusNow("drum-trig");
-        }
+        current.sparkMode = WrapIndex(current.sparkMode + 1, MODE_COUNT);
+        diagnostics.Log(DBG_INFO, DBG_CAT_CTRL, "%-10smode -> %s", "enc click", ModeName(current.sparkMode));
+        MarkInteraction();
+        DebugStatusNow("enc-click-bank");
     }
 }
 
@@ -818,89 +799,98 @@ void ProcessKnobs()
         k1PitchForFreq = pitchNorm;
     }
 
-    const bool modNow = sw2ModifierActive;
-    if(!modNow && prevSw2ModifierForLatch)
+    const bool sw1ModNow = sw1ModifierActive;
+    if(!sw1ModNow && prevSw1ModifierForLatch)
     {
         k1PitchFrozenAfterModifier = true;
         k1NormLatchOnModifierExit  = pitchNorm;
         lastKnob1LogValue          = pitchNorm;
+    }
+    prevSw1ModifierForLatch = sw1ModNow;
+
+    const bool sw2ModNow = sw2ModifierActive;
+    if(!sw2ModNow && prevSw2ModifierForLatch)
+    {
         // k2 was driving morph (k4); do not snap timbre to the knob — freeze timbre from k2
         // until the knob moves again (same idea as k1/k3).
         k2ShapeFrozenAfterModifier = true;
         k2NormLatchOnModifierExit  = shapeRaw;
     }
-    prevSw2ModifierForLatch = modNow;
+    prevSw2ModifierForLatch = sw2ModNow;
 
-    if(sw2ModifierActive)
+    bool modifierChanged = false;
+    if(sw1ModifierActive)
     {
         const bool k3Up = (modifierHarmonics <= 0.0f) ? true : (pitchNorm >= modifierHarmonics);
-        const bool k4Up = (modifierMorph <= 0.0f) ? true : (shapeRaw >= modifierMorph);
-        bool       changed = false;
-
         if(fabsf(pitchNorm - modifierHarmonics) > 0.01f)
         {
             modifierHarmonics = pitchNorm;
-            changed    = true;
+            modifierChanged   = true;
             LogModifierFeedback(k3Up ? "k3  up" : "k3  down");
         }
+    }
+    if(sw2ModifierActive)
+    {
+        const bool k4Up = (modifierMorph <= 0.0f) ? true : (shapeRaw >= modifierMorph);
         if(fabsf(shapeRaw - modifierMorph) > 0.01f)
         {
             modifierMorph = shapeRaw;
-            changed    = true;
+            modifierChanged = true;
             LogModifierFeedback(k4Up ? "k4  up" : "k4  down");
         }
-        if(changed)
-        {
-            MarkInteraction();
-            DebugStatusNow("sw2-mod");
-        }
-        return;
+    }
+    if(modifierChanged)
+    {
+        MarkInteraction();
+        DebugStatusNow((sw1ModifierActive && sw2ModifierActive) ? "sw1+sw2-mod"
+                                                                : (sw1ModifierActive ? "sw1-mod"
+                                                                                     : "sw2-mod"));
     }
 
-    if(k1PitchFrozenAfterModifier)
+    if(!sw1ModifierActive)
     {
-        if(fabsf(pitchNorm - k1NormLatchOnModifierExit) > kKnobRearmMove)
+        if(k1PitchFrozenAfterModifier)
         {
-            k1PitchFrozenAfterModifier = false;
-            k1PitchForFreq             = pitchNorm;
-        }
-        else
-        {
-            lastKnob1LogValue = pitchNorm;
-        }
-    }
-    else
-    {
-        k1PitchForFreq += kPitchSmoothAlpha * (pitchNorm - k1PitchForFreq);
-    }
-
-    // Musical pitch mapping centered at middle C; use k1PitchForFreq (low-pass) not raw ADC.
-    if(!k1PitchFrozenAfterModifier)
-    {
-        const float newFreq = CurrentPitchFrequency(k1PitchForFreq);
-        if(fabsf(newFreq - current.waveformFreq) > kFreqUpdateMinDeltaHz)
-        {
-            const bool k1Up
-                = (lastKnob1LogValue < 0.0f) ? true : (k1PitchForFreq >= lastKnob1LogValue);
-            current.waveformFreq = newFreq;
-            MarkInteraction();
-            TRACE_CTRL_LOG("freq -> %.2f (oct=%d)", current.waveformFreq, octaveShift);
-            if(octaveChangedPending)
+            if(fabsf(pitchNorm - k1NormLatchOnModifierExit) > kKnobRearmMove)
             {
-                // Switch press already emitted its own single-line feedback.
-                octaveChangedPending = false;
+                k1PitchFrozenAfterModifier = false;
+                k1PitchForFreq             = pitchNorm;
             }
             else
             {
-                LogKnobFeedback(k1Up ? "k1  up" : "k1  down");
+                lastKnob1LogValue = pitchNorm;
             }
-            lastKnob1LogValue = k1PitchForFreq;
-            DebugStatusNow("freq");
         }
         else
         {
-            lastKnob1LogValue = k1PitchForFreq;
+            k1PitchForFreq += kPitchSmoothAlpha * (pitchNorm - k1PitchForFreq);
         }
+
+        // Musical pitch mapping centered at middle C; use k1PitchForFreq (low-pass) not raw ADC.
+        if(!k1PitchFrozenAfterModifier)
+        {
+            const float newFreq = CurrentPitchFrequency(k1PitchForFreq);
+            if(fabsf(newFreq - current.waveformFreq) > kFreqUpdateMinDeltaHz)
+            {
+                const bool k1Up
+                    = (lastKnob1LogValue < 0.0f) ? true : (k1PitchForFreq >= lastKnob1LogValue);
+                current.waveformFreq = newFreq;
+                MarkInteraction();
+                TRACE_CTRL_LOG("freq -> %.2f", current.waveformFreq);
+                LogKnobFeedback(k1Up ? "k1  up" : "k1  down");
+                lastKnob1LogValue = k1PitchForFreq;
+                DebugStatusNow("freq");
+            }
+            else
+            {
+                lastKnob1LogValue = k1PitchForFreq;
+            }
+        }
+    }
+
+    if(sw2ModifierActive)
+    {
+        return;
     }
 
     (void)shapeParam.Process();
@@ -1184,7 +1174,7 @@ int main(void) {
     SparkSettings defaultSettings;
     defaultSettings.sparkMode    = MODE_WAVEFORMS;
     defaultSettings.waveform     = WAVE_SIN;
-    defaultSettings.waveformFreq = kMiddleC;
+    defaultSettings.waveformFreq = 220.0f;
     defaultSettings.macroA = 0;
     defaultSettings.macroB = 0;
 
@@ -1237,6 +1227,19 @@ int main(void) {
         runtime.ProcessControls();
 
         const uint32_t nowMs = System::GetNow();
+        if(spark.button1.RisingEdge())
+        {
+            sw1PressStartMs    = nowMs;
+            sw1ModifierActive  = false;
+        }
+        if(spark.button1.Pressed() && !sw1ModifierActive
+           && ((nowMs - sw1PressStartMs) >= kSw1HoldMs))
+        {
+            sw1ModifierActive = true;
+            LogModifierState("sw1 hold", "on");
+            DebugStatusNow("sw1-mod-on");
+        }
+
         if(spark.button2.RisingEdge())
         {
             sw2PressStartMs   = nowMs;
@@ -1246,33 +1249,26 @@ int main(void) {
            && ((nowMs - sw2PressStartMs) >= kSw2HoldMs))
         {
             sw2ModifierActive = true;
-            LogModifierState("on");
+            LogModifierState("sw2 hold", "on");
             DebugStatusNow("sw2-mod-on");
         }
 
         if(spark.button1.FallingEdge())
         {
-            octaveShift = (octaveShift < kOctaveShiftMax) ? (octaveShift + 1) : kOctaveShiftMax;
-            octaveChangedPending = true;
-            MarkInteraction();
-            LogSwitchFeedback("sw1");
-            DebugStatusNow("oct-up");
+            if(sw1ModifierActive)
+            {
+                sw1ModifierActive = false;
+                LogModifierState("sw1 hold", "off");
+                DebugStatusNow("sw1-mod-off");
+            }
         }
         if(spark.button2.FallingEdge())
         {
             if(sw2ModifierActive)
             {
                 sw2ModifierActive = false;
-                LogModifierState("off");
+                LogModifierState("sw2 hold", "off");
                 DebugStatusNow("sw2-mod-off");
-            }
-            else
-            {
-                octaveShift = (octaveShift > kOctaveShiftMin) ? (octaveShift - 1) : kOctaveShiftMin;
-                octaveChangedPending = true;
-                MarkInteraction();
-                LogSwitchFeedback("sw2");
-                DebugStatusNow("oct-down");
             }
         }
 
